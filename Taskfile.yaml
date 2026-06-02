@@ -1,0 +1,185 @@
+version: '3'
+
+vars:
+  WORKER_NAME: nexus-beacon-receiver
+  WRANGLER: wrangler
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the Cloudflare Worker
+    cmds:
+      - "{{.WRANGLER}} deploy --dry-run"
+
+  dev:
+    desc: Start development server
+    cmds:
+      - "{{.WRANGLER}} dev"
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - cargo test
+
+  test-verbose:
+    desc: Run unit tests with verbose output
+    cmds:
+      - cargo test -- --nocapture
+
+  integration-test:
+    desc: Run integration tests
+    cmds:
+      - bash scripts/integration-test.sh
+
+  fmt:
+    desc: Format code
+    cmds:
+      - cargo fmt
+
+  fmt-check:
+    desc: Check code formatting
+    cmds:
+      - cargo fmt -- --check
+
+  lint:
+    desc: Run linter
+    cmds:
+      - cargo clippy -- -D warnings
+
+  lint-fix:
+    desc: Fix lint issues
+    cmds:
+      - cargo clippy --fix --allow-dirty --allow-staged
+
+  check:
+    desc: Run formatting, linting, and tests
+    cmds:
+      - task: fmt-check
+      - task: lint
+      - task: test
+
+  deploy:
+    desc: Deploy to Cloudflare
+    cmds:
+      - "{{.WRANGLER}} deploy"
+
+  deploy-dry-run:
+    desc: Dry run deployment
+    cmds:
+      - "{{.WRANGLER}} deploy --dry-run"
+
+  tail:
+    desc: Tail Cloudflare Worker logs
+    cmds:
+      - "{{.WRANGLER}} tail"
+
+  d1-create:
+    desc: Create D1 database
+    cmds:
+      - "{{.WRANGLER}} d1 create {{.CLI_ARGS}}"
+
+  d1-schema:
+    desc: 'Create D1 database schema (use: task d1-schema -- <db-name>)'
+    cmds:
+      - "{{.WRANGLER}} d1 execute {{.CLI_ARGS}} --file=schema.sql"
+
+  d1-query:
+    desc: 'Execute D1 query (use: task d1-query -- <db-name>)'
+    cmds:
+      - "{{.WRANGLER}} d1 execute {{.CLI_ARGS}}"
+
+  d1-list-tables:
+    desc: 'List D1 database tables (use: task d1-list-tables -- <db-name>)'
+    cmds:
+      - "{{.WRANGLER}} d1 execute {{.CLI_ARGS}} --command='SELECT name FROM sqlite_master WHERE type=\"table\";'"
+
+  secret-set:
+    desc: Set BEACON_AUTH_TOKEN secret
+    cmds:
+      - "{{.WRANGLER}} secret put BEACON_AUTH_TOKEN"
+
+  version:
+    desc: Show current version
+    cmds:
+      - echo "VERSION: $(cat VERSION)"
+      - grep '^version =' Cargo.toml
+
+  version-check:
+    desc: Validate version sync between VERSION and Cargo.toml
+    cmds:
+      - |
+        VERSION_FILE=$(cat VERSION)
+        CARGO_VERSION=$(grep '^version =' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        if [ "$VERSION_FILE" != "$CARGO_VERSION" ]; then
+          echo "Version mismatch: VERSION file has $VERSION_FILE, Cargo.toml has $CARGO_VERSION"
+          exit 1
+        else
+          echo "Versions match: $VERSION_FILE"
+        fi
+
+  bump-patch:
+    desc: Bump patch version
+    cmds:
+      - bash scripts/bump-version.sh patch
+
+  bump-minor:
+    desc: Bump minor version
+    cmds:
+      - bash scripts/bump-version.sh minor
+
+  bump-major:
+    desc: Bump major version
+    cmds:
+      - bash scripts/bump-version.sh major
+
+  auto-version:
+    desc: Auto-bump version based on conventional commits
+    cmds:
+      - bash scripts/auto-version.sh --apply
+
+  auto-version-dry:
+    desc: Show what version bump would occur (dry run)
+    cmds:
+      - bash scripts/auto-version.sh --dry-run
+
+  release:
+    desc: Create and push release tag
+    cmds:
+      - |
+        VERSION=$(cat VERSION)
+        TAG="v$VERSION"
+        git tag -a "$TAG" -m "Release $TAG"
+        git push origin "$TAG"
+        echo "Created and pushed tag $TAG"
+
+  full-release:
+    desc: Auto-version, tag, and deploy
+    cmds:
+      - task: auto-version
+      - task: release
+      - task: deploy
+
+  setup-hooks:
+    desc: Setup git hooks
+    cmds:
+      - bash scripts/setup-hooks.sh
+
+  setup:
+    desc: Full project setup
+    cmds:
+      - task: setup-hooks
+      - task: build
+
+  size:
+    desc: Show WASM file size
+    cmds:
+      - find target -name "*.wasm" -exec ls -lh {} \;
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - cargo clean

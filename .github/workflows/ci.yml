@@ -1,0 +1,121 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+      - name: Run tests
+        run: cargo test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release
+      - name: Check WASM size
+        run: |
+          WASM_FILE=$(find target/wasm32-unknown-unknown/release -name "*.wasm" -type f -exec ls -la {} \; | awk '{print $9}')
+          if [ -n "$WASM_FILE" ]; then
+            SIZE=$(du -k "$WASM_FILE" | cut -f1)
+            if [ "$SIZE" -gt 10240 ]; then
+              echo "WASM file size ($SIZE KB) exceeds 10MB limit"
+              exit 1
+            else
+              echo "WASM file size: $SIZE KB (under 10MB limit)"
+            fi
+          else
+            echo "No WASM file found"
+            exit 1
+          fi
+
+  release:
+    needs: [test, lint, format, build-wasm]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: CI Pipeline Summary
+        run: |
+          echo "## CI/CD Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|:------|:------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint (Clippy) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build WASM | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Ready for release**" >> $GITHUB_STEP_SUMMARY

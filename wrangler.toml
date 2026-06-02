@@ -1,0 +1,15 @@
+name = "nexus-beacon-receiver"
+main = "src/lib.rs"
+compatibility_date = "2026-05-09"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nexus-beacon-db"
+database_id = "TODO"
+
+[vars]
+CORS_ORIGINS = "https://enerby.dev,https://www.enerby.dev"
+
+# Secrets (set via `wrangler secret put`):
+# - BEACON_AUTH_TOKEN — required for POST /v1/beacon

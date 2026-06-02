@@ -1,0 +1,21 @@
+#!/bin/sh
+# Post-commit hook for nexus-beacon-receiver
+# Analyzes commit and suggests version bump
+
+commit_msg=$(git log -1 --pretty=%B)
+
+# Skip if this is already a version bump commit
+if echo "$commit_msg" | grep -qE "bump|version"; then
+  echo "Skipping post-commit hook for version bump commit"
+  exit 0
+fi
+
+# For regular commits, suggest version bump
+echo "Analyzing commit for version bump suggestion..."
+# Run the version analysis script
+if [ -x scripts/auto-version.sh ]; then
+  version_suggestion=$(scripts/auto-version.sh --dry-run 2>/dev/null || echo "No suggestion available")
+  echo "Suggested version action: $version_suggestion"
+fi
+
+exit 0
