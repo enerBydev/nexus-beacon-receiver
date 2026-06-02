@@ -1,0 +1,15 @@
+language: rust
+review:
+  profile: assertive
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!docs/**"
+lint:
+  enabled:
+    - clippy
+    - rustfmt
+commit_message:
+  pattern: "^(feat|fix|chore|docs|refactor|test|ci|perf|style|build|revert)(\(.+\))?!?: .+"
+early_access: true
