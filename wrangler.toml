@@ -1,12 +1,14 @@
 name = "nexus-beacon-receiver"
-main = "src/lib.rs"
+main = "build/worker/shim.mjs"
 compatibility_date = "2026-05-09"
-compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "worker-build --release"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "nexus-beacon-db"
-database_id = "TODO"
+database_id = "759b8e79-b7a6-4f43-bb3d-58045d44bb47"
 
 [vars]
 CORS_ORIGINS = "https://enerby.dev,https://www.enerby.dev"

@@ -246,7 +246,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/v1/beacon", handle_beacon)
         .get_async("/v1/stats", handle_stats)
         .get_async("/v1/stats/summary", handle_summary)
-        .options("/*", handle_options)
+        .options("/*route", handle_options)
         .run(req, env)
         .await
 }
