@@ -38,6 +38,60 @@ struct BeaconStats {
     tool_use_ratio: f64,
 }
 
+/// Row from the `beacons` table used for JSON merge aggregation.
+#[derive(Deserialize)]
+struct BeaconRow {
+    models_used: String,
+    client_types: String,
+    version: String,
+}
+
+/// Merge multiple JSON objects from beacons into a single aggregated object.
+/// Each numeric value is summed across all objects (supports both integers and floats).
+fn merge_json_objects(json_strings: &[String]) -> String {
+    let mut merged: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    for js in json_strings {
+        if let Ok(obj) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(js) {
+            for (key, value) in obj {
+                let incoming = value.as_f64().unwrap_or(0.0);
+                let existing = merged.entry(key).or_insert_with(|| serde_json::Value::from(0));
+                // Preserve integer representation when possible for cleaner output
+                if let Some(n) = existing.as_f64() {
+                    let sum = n + incoming;
+                    if sum.fract() == 0.0 {
+                        *existing = serde_json::Value::from(sum as i64);
+                    } else {
+                        *existing = serde_json::Value::from(sum);
+                    }
+                }
+            }
+        }
+    }
+    serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Merge version strings from beacons into a `{version: instance_count}` JSON.
+fn merge_versions(versions: &[String]) -> String {
+    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for v in versions {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            *counts.entry(v).or_insert(0) += 1;
+        }
+    }
+    serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Result of numeric aggregation query for daily_global_stats.
+#[derive(Deserialize)]
+struct AggregationResult {
+    total_instances: i64,
+    total_requests: i64,
+    total_unique_users: i64,
+    avg_message_count: f64,
+    tool_use_ratio: f64,
+}
+
 /// Row from the `daily_global_stats` D1 table.
 #[derive(Serialize, Deserialize)]
 struct DailyGlobalStats {
@@ -161,26 +215,56 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     )?;
     upsert_stmt.run().await?;
 
-    // Recalculate daily_global_stats for this date from all beacons
+    // Recalculate daily_global_stats for this date from all beacons.
+    // JSON merge is done in Rust because D1/SQLite lacks native JSON merge.
+    let merge_rows = worker::query!(
+        &db,
+        "SELECT models_used, client_types, version FROM beacons WHERE date = ?1",
+        &payload.date,
+    )?;
+    let merge_result = merge_rows.all().await?;
+    let rows: Vec<BeaconRow> = merge_result.results()?;
+
+    let models_json =
+        merge_json_objects(&rows.iter().map(|r| r.models_used.clone()).collect::<Vec<_>>());
+    let ct_json =
+        merge_json_objects(&rows.iter().map(|r| r.client_types.clone()).collect::<Vec<_>>());
+    let ver_json = merge_versions(&rows.iter().map(|r| r.version.clone()).collect::<Vec<_>>());
+
+    // Get aggregate counts via SQL
+    let count_stmt = worker::query!(
+        &db,
+        "SELECT COUNT(DISTINCT instance_id) as total_instances, \
+         SUM(total_requests) as total_requests, \
+         SUM(unique_fingerprints) as total_unique_users, \
+         AVG(avg_message_count) as avg_message_count, \
+         AVG(tool_use_ratio) as tool_use_ratio \
+         FROM beacons WHERE date = ?1",
+        &payload.date,
+    )?;
+    let agg: AggregationResult = count_stmt.first(None).await?.unwrap_or(AggregationResult {
+        total_instances: 0,
+        total_requests: 0,
+        total_unique_users: 0,
+        avg_message_count: 0.0,
+        tool_use_ratio: 0.0,
+    });
+
     let recalc_stmt = worker::query!(
         &db,
         "INSERT OR REPLACE INTO daily_global_stats \
          (date, total_instances, total_requests, total_unique_users, \
           models_used, client_types, avg_message_count, tool_use_ratio, versions, updated_at) \
-         SELECT \
-             date, \
-             COUNT(DISTINCT instance_id), \
-             SUM(total_requests), \
-             SUM(unique_fingerprints), \
-             '{}', \
-             '{}', \
-             AVG(avg_message_count), \
-             AVG(tool_use_ratio), \
-             '{}', \
-             DATETIME('now') \
-         FROM beacons \
-         WHERE date = ?1",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, DATETIME('now'))",
         &payload.date,
+        agg.total_instances,
+        agg.total_requests,
+        agg.total_unique_users,
+        &models_json,
+        &ct_json,
+        agg.avg_message_count,
+        agg.tool_use_ratio,
+        &ver_json,
     )?;
     recalc_stmt.run().await?;
 
@@ -257,8 +341,51 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn it_compiles() {
         assert!(true);
+    }
+
+    #[test]
+    fn merge_json_empty() {
+        assert_eq!(merge_json_objects(&[]), "{}");
+    }
+
+    #[test]
+    fn merge_json_single() {
+        let inputs = vec!["{\"a\":10,\"b\":5}".to_string()];
+        let result = merge_json_objects(&inputs);
+        let parsed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed.get("a").unwrap().as_i64().unwrap(), 10);
+        assert_eq!(parsed.get("b").unwrap().as_i64().unwrap(), 5);
+    }
+
+    #[test]
+    fn merge_json_sums_values() {
+        let inputs = vec!["{\"a\":10,\"b\":5}".to_string(), "{\"a\":20,\"c\":3}".to_string()];
+        let result = merge_json_objects(&inputs);
+        let parsed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed.get("a").unwrap().as_i64().unwrap(), 30);
+        assert_eq!(parsed.get("b").unwrap().as_i64().unwrap(), 5);
+        assert_eq!(parsed.get("c").unwrap().as_i64().unwrap(), 3);
+    }
+
+    #[test]
+    fn merge_versions_counts_instances() {
+        let inputs = vec!["0.17.4".to_string(), "0.17.4".to_string(), "0.18.0".to_string()];
+        let result = merge_versions(&inputs);
+        // Parse the result and check values instead of using contains
+        let parsed: std::collections::HashMap<String, i64> = serde_json::from_str(&result).unwrap();
+        assert_eq!(*parsed.get("0.17.4").unwrap(), 2);
+        assert_eq!(*parsed.get("0.18.0").unwrap(), 1);
+    }
+
+    #[test]
+    fn merge_versions_empty() {
+        assert_eq!(merge_versions(&[]), "{}");
     }
 }
