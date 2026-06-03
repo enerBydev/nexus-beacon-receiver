@@ -7,8 +7,11 @@ description = "NEXUS global telemetry receiver — Cloudflare Worker (Rust/WASM)
 license = "MIT"
 repository = "https://github.com/enerBydev/nexus-beacon-receiver"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-worker = "0.8"
+worker = { version = "0.8", features = ["d1"] }
 worker-sys = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

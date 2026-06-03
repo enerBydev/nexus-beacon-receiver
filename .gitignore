@@ -26,6 +26,9 @@ Thumbs.db
 # Logs
 *.log
 
+#docs
+docs/
+
 # Claude Code / AI tools
 .claude/
 .omc/
