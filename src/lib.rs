@@ -8,6 +8,7 @@
 //! - POST /v1/beacon - Accepts telemetry data from gateways (auth required)
 //! - GET /v1/stats - Returns detailed statistics (last 30 days)
 //! - GET /v1/stats/summary - Returns summary statistics
+//! - GET /v1/stats/shield - Returns Shields.io compatible badge data
 
 use serde::{Deserialize, Serialize};
 use worker::*;
@@ -125,6 +126,18 @@ struct SummaryResponse {
 #[derive(Serialize)]
 struct ErrorResponse {
     error: &'static str,
+}
+
+/// Response for `GET /v1/stats/shield` - Shields.io endpoint badge format.
+#[derive(Serialize)]
+struct ShieldResponse {
+    #[serde(rename = "schemaVersion")]
+    schema_version: u8,
+    label: &'static str,
+    message: String,
+    color: &'static str,
+    #[serde(rename = "namedLogo")]
+    named_logo: &'static str,
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +327,29 @@ async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response
     Response::from_json(&summary)?.with_cors(&cors)
 }
 
+/// `GET /v1/stats/shield` — Shields.io compatible badge data.
+async fn handle_shield(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let cors = cors_config(&ctx);
+    let db = ctx.d1("DB")?;
+
+    let stmt = worker::query!(
+        &db,
+        "SELECT COALESCE(SUM(total_instances), 0) as total_instances FROM daily_global_stats",
+    )?;
+    let row: serde_json::Value = stmt.first(None).await?.unwrap_or_default();
+    let total = row.get("total_instances").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let shield = ShieldResponse {
+        schema_version: 1,
+        label: "NEXUS",
+        message: format!("{} active", total),
+        color: "blue",
+        named_logo: "cloudflare",
+    };
+
+    Response::from_json(&shield)?.with_cors(&cors)
+}
+
 /// `OPTIONS /*` — CORS preflight.
 fn handle_options(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
@@ -330,6 +366,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/v1/beacon", handle_beacon)
         .get_async("/v1/stats", handle_stats)
         .get_async("/v1/stats/summary", handle_summary)
+        .get_async("/v1/stats/shield", handle_shield)
         .options("/*route", handle_options)
         .run(req, env)
         .await
