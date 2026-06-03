@@ -1,6 +1,6 @@
 [package]
 name = "nexus-beacon-receiver"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["enerBydev <rjmemdoza.s@gmail.com>"]
 description = "NEXUS global telemetry receiver — Cloudflare Worker (Rust/WASM)"
