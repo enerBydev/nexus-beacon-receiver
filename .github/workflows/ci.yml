@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
@@ -11,111 +11,143 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install cargo-audit
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-audit
+    - name: Run security audit
+      run: cargo audit
+
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
-      - name: Run tests
-        run: cargo test
+    - uses: actions/checkout@v5
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    - name: Cache cargo
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-test-
+    - name: Run tests
+      run: cargo test
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-clippy-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+    - uses: actions/checkout@v5
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - name: Cache cargo
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-clippy-
+    - name: Run clippy
+      run: cargo clippy -- -D warnings
 
   format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Check formatting
-        run: cargo fmt -- --check
+    - uses: actions/checkout@v5
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    - name: Check formatting
+      run: cargo fmt -- --check
 
   build-wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-
-      - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release
-      - name: Check WASM size
-        run: |
-          WASM_FILE=$(find target/wasm32-unknown-unknown/release -name "*.wasm" -type f -exec ls -la {} \; | awk '{print $9}')
-          if [ -n "$WASM_FILE" ]; then
-            SIZE=$(du -k "$WASM_FILE" | cut -f1)
-            if [ "$SIZE" -gt 10240 ]; then
-              echo "WASM file size ($SIZE KB) exceeds 10MB limit"
-              exit 1
-            else
-              echo "WASM file size: $SIZE KB (under 10MB limit)"
-            fi
-          else
-            echo "No WASM file found"
+    - uses: actions/checkout@v5
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - name: Cache cargo
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-build-
+    - name: Build WASM
+      run: cargo build --target wasm32-unknown-unknown --release
+    - name: Check WASM size
+      run: |
+        WASM_FILE=$(find target/wasm32-unknown-unknown/release -name "*.wasm" -type f -exec ls -la {} \; | awk '{print $9}')
+        if [ -n "$WASM_FILE" ]; then
+          SIZE=$(du -k "$WASM_FILE" | cut -f1)
+          if [ "$SIZE" -gt 10240 ]; then
+            echo "WASM file size ($SIZE KB) exceeds 10MB limit"
             exit 1
+          else
+            echo "WASM file size: $SIZE KB (under 10MB limit)"
           fi
+        else
+          echo "No WASM file found"
+          exit 1
+        fi
 
   release:
-    needs: [test, lint, format, build-wasm]
+    needs: [security-scan, test, lint, format, build-wasm]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
 
-      - name: CI Pipeline Summary
-        run: |
-          echo "## CI/CD Pipeline Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|:------|:------:|" >> $GITHUB_STEP_SUMMARY
-          echo "| Tests | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Lint (Clippy) | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Format | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build WASM | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Ready for release**" >> $GITHUB_STEP_SUMMARY
+    - name: Get version
+      id: get_version
+      run: |
+        VERSION=$(cat VERSION)
+        TAG="v$VERSION"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+    - name: Check if tag exists
+      id: check_tag
+      run: |
+        if git rev-parse "${{ steps.get_version.outputs.tag }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "✅ Tag ${{ steps.get_version.outputs.tag }} exists — release handled by auto-version.yml"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "ℹ️ Tag ${{ steps.get_version.outputs.tag }} not found — auto-version.yml will handle release"
+        fi
+
+    - name: CI Pipeline Summary
+      run: |
+        echo "## CI/CD Pipeline Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|:------|:------:|" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Tests | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Lint (Clippy) | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Format | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build WASM | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version**: ${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Tag exists**: ${{ steps.check_tag.outputs.exists }}" >> $GITHUB_STEP_SUMMARY

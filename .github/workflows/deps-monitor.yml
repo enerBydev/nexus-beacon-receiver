@@ -1,0 +1,58 @@
+name: Dependencies Monitor
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-worker-version:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check worker crate version
+      run: |
+        response=$(curl -s -H "User-Agent: nexus-beacon-receiver deps monitor" https://crates.io/api/v1/crates/worker)
+        latest_version=$(echo "$response" | jq -r '.max_version')
+        echo "Latest stable worker version: $latest_version"
+        echo "latest_version=$latest_version" >> $GITHUB_ENV
+
+    - name: Check for existing issue
+      run: |
+        existing_issue=$(gh issue list --search "chore\\(deps\\): worker.*available for upgrade" --state open --json title,number --jq '.[] | .number' | head -n 1)
+        if [ -n "$existing_issue" ]; then
+          echo "issue_exists=true" >> $GITHUB_ENV
+        else
+          echo "issue_exists=false" >> $GITHUB_ENV
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Create issue if new version available
+      if: env.issue_exists != 'true'
+      run: |
+        CURRENT_VERSION="0.8"
+        if [ "$latest_version" != "$CURRENT_VERSION" ]; then
+          gh issue create \
+            --title "chore(deps): worker $latest_version available for upgrade (current: $CURRENT_VERSION)" \
+            --body "A new version of the \`worker\` crate ($latest_version) is available on crates.io.
+
+        Our project is currently using version $CURRENT_VERSION.
+
+        This issue is to track that we should evaluate upgrading to this new version.
+
+        Please check if this new version:
+        - Is compatible with our Cloudflare Workers usage
+        - Supports the D1 feature we require
+        - Compiles to wasm32-unknown-unknown without issues
+        - Has no breaking API changes affecting our codebase" \
+            --label "dependencies,automated"
+        else
+          echo "Worker crate is already at latest version ($CURRENT_VERSION)"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

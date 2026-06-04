@@ -2,13 +2,13 @@ name: Auto Version & Release
 # This workflow auto-bumps version based on conventional commits
 # and creates a GitHub release when pushed to main.
 #
-# Trigger: Runs after CI Pipeline passes on main
+# Trigger: Runs after CI/CD Pipeline passes on main
 # Logic: Analyzes commits since last tag → determines bump → creates release
 # Author: Commits as repo owner (enerBydev), not github-actions bot
 
 on:
   workflow_run:
-    workflows: ["CI Pipeline"]
+    workflows: ["CI/CD Pipeline"]
     types: [completed]
     branches: [main]
 
@@ -147,42 +147,42 @@ jobs:
         SECURITY_RAW=$(git log "v${CURRENT}..HEAD~1" --format="%s" | grep -iE "security|audit|vulnerabilit" || true)
 
         {
-          if [ -n "$FEAT_RAW" ]; then
-            echo "### Added"
-            echo "$FEAT_RAW" | while IFS= read -r line; do
-              CLEAN=$(echo "$line" | sed 's/^feat\([^)]*\)\?: //')
-              echo "- ${CLEAN^}"
-            done
-            echo ""
-          fi
+        if [ -n "$FEAT_RAW" ]; then
+          echo "### Added"
+          echo "$FEAT_RAW" | while IFS= read -r line; do
+            CLEAN=$(echo "$line" | sed 's/^feat\([^)]*\)\?: //')
+            echo "- ${CLEAN^}"
+          done
+          echo ""
+        fi
 
-          CHANGED_RAW=$(git log "v${CURRENT}..HEAD~1" --format="%s" | grep -E "^(refactor|perf|chore|ci|docs)" || true)
-          if [ -n "$CHANGED_RAW" ]; then
-            echo "### Changed"
-            echo "$CHANGED_RAW" | while IFS= read -r line; do
-              CLEAN=$(echo "$line" | sed 's/^[a-z]*\([^)]*\)\?: //')
-              echo "- ${CLEAN^}"
-            done
-            echo ""
-          fi
+        CHANGED_RAW=$(git log "v${CURRENT}..HEAD~1" --format="%s" | grep -E "^(refactor|perf|chore|ci|docs)" || true)
+        if [ -n "$CHANGED_RAW" ]; then
+          echo "### Changed"
+          echo "$CHANGED_RAW" | while IFS= read -r line; do
+            CLEAN=$(echo "$line" | sed 's/^[a-z]*\([^)]*\)\?: //')
+            echo "- ${CLEAN^}"
+          done
+          echo ""
+        fi
 
-          if [ -n "$FIX_RAW" ]; then
-            echo "### Fixed"
-            echo "$FIX_RAW" | while IFS= read -r line; do
-              CLEAN=$(echo "$line" | sed 's/^fix\([^)]*\)\?: //')
-              echo "- ${CLEAN^}"
-            done
-            echo ""
-          fi
+        if [ -n "$FIX_RAW" ]; then
+          echo "### Fixed"
+          echo "$FIX_RAW" | while IFS= read -r line; do
+            CLEAN=$(echo "$line" | sed 's/^fix\([^)]*\)\?: //')
+            echo "- ${CLEAN^}"
+          done
+          echo ""
+        fi
 
-          if [ -n "$SECURITY_RAW" ]; then
-            echo "### Security"
-            echo "$SECURITY_RAW" | while IFS= read -r line; do
-              CLEAN=$(echo "$line" | sed 's/^[a-z]*\([^)]*\)\?: //')
-              echo "- ${CLEAN^}"
-            done
-            echo ""
-          fi
+        if [ -n "$SECURITY_RAW" ]; then
+          echo "### Security"
+          echo "$SECURITY_RAW" | while IFS= read -r line; do
+            CLEAN=$(echo "$line" | sed 's/^[a-z]*\([^)]*\)\?: //')
+            echo "- ${CLEAN^}"
+          done
+          echo ""
+        fi
         } > /tmp/release_notes.md
 
         echo "body_path=/tmp/release_notes.md" >> $GITHUB_OUTPUT
