@@ -125,15 +125,30 @@ fn merge_json_objects(json_strings: &[String]) -> String {
         if let Ok(obj) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(js) {
             for (key, value) in obj {
                 let incoming = value.as_f64().unwrap_or(0.0);
+
+                // Skip non-finite incoming values (Infinity, NaN) to prevent data corruption
+                if !incoming.is_finite() {
+                    continue;
+                }
+
                 let existing = merged.entry(key).or_insert_with(|| serde_json::Value::from(0));
                 // Preserve integer representation when possible for cleaner output
                 if let Some(n) = existing.as_f64() {
                     let sum = n + incoming;
-                    if sum.fract() == 0.0 {
-                        *existing = serde_json::Value::from(sum as i64);
-                    } else {
+
+                    // Overflow protection: skip non-finite values (Infinity, NaN)
+                    // and only cast to i64 when the value fits
+                    if sum.is_finite() && sum <= i64::MAX as f64 && sum >= i64::MIN as f64 {
+                        if sum.fract() == 0.0 {
+                            *existing = serde_json::Value::from(sum as i64);
+                        } else {
+                            *existing = serde_json::Value::from(sum);
+                        }
+                    } else if sum.is_finite() {
+                        // Value is finite but outside i64 range — keep as f64
                         *existing = serde_json::Value::from(sum);
                     }
+                    // If sum is not finite (infinity/NaN), keep existing value (don't corrupt)
                 }
             }
         }
@@ -219,9 +234,13 @@ fn cors_config(ctx: &RouteContext<()>) -> Cors {
     let origins: Vec<String> = ctx
         .var("CORS_ORIGINS")
         .map(|v| v.to_string())
-        .unwrap_or_else(|_| "*".to_string())
+        .unwrap_or_else(|_| {
+            // Fail-closed: only allow production domains when config is missing
+            "https://enerby.dev,https://www.enerby.dev".to_string()
+        })
         .split(',')
         .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .collect();
 
     Cors::new()
@@ -370,9 +389,16 @@ fn zeroize_string(s: &mut String) {
 }
 
 /// Validate the `Authorization: Bearer <token>` header against the secret.
-fn validate_auth(req: &Request, ctx: &RouteContext<()>) -> Result<()> {
-    let mut expected = ctx.secret("BEACON_AUTH_TOKEN")?.to_string();
-    let header = req.headers().get("Authorization")?.unwrap_or_default();
+/// Returns Result<(), ()> to avoid exposing Rust internals via Error::RustError.
+fn validate_auth(req: &Request, ctx: &RouteContext<()>) -> Result<(), ()> {
+    let mut expected = match ctx.secret("BEACON_AUTH_TOKEN") {
+        Ok(s) => s.to_string(),
+        Err(_) => return Err(()),
+    };
+    let header = match req.headers().get("Authorization") {
+        Ok(Some(h)) => h,
+        _ => return Err(()),
+    };
     let token = extract_bearer_token(&header);
 
     let is_valid = constant_time_eq(token, &expected);
@@ -381,7 +407,7 @@ fn validate_auth(req: &Request, ctx: &RouteContext<()>) -> Result<()> {
     if is_valid {
         Ok(())
     } else {
-        Err(Error::RustError("unauthorized".into()))
+        Err(())
     }
 }
 
@@ -797,7 +823,34 @@ mod tests {
     }
 
     #[test]
-    fn validate_payload_too_many_map_entries() {
+    fn merge_json_overflow_protection() {
+        let inputs = vec![
+            r#"{"a":1}"#.to_string(),
+            r#"{"a":1.8e308}"#.to_string(), // Near f64::MAX — sum overflows to infinity
+        ];
+        let result = merge_json_objects(&inputs);
+        let parsed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&result).unwrap();
+        // Should not be null or infinity — should be finite
+        assert!(parsed.get("a").unwrap().as_f64().unwrap().is_finite());
+    }
+
+    #[test]
+    fn merge_json_nan_skipped() {
+        let inputs = vec![r#"{"a":5}"#.to_string(), r#"{"b":3}"#.to_string()];
+        let result = merge_json_objects(&inputs);
+        let parsed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&result).unwrap();
+        // All values should be finite
+        for (_, v) in &parsed {
+            if let Some(n) = v.as_f64() {
+                assert!(n.is_finite());
+            }
+        }
+    }
+
+    #[test]
+    fn merge_json_too_many_map_entries() {
         let mut p = valid_test_payload();
         for i in 0..51 {
             p.stats.models_used.insert(format!("model-{}", i), serde_json::Value::from(1));
@@ -813,5 +866,14 @@ mod tests {
         assert!(!is_valid_date("not-a-date"));
         assert!(!is_valid_date("2026-6-4"));
         assert!(!is_valid_date(""));
+    }
+
+    #[test]
+    fn cors_fail_closed_no_wildcard() {
+        // The default fallback should never be "*"
+        let default = "https://enerby.dev,https://www.enerby.dev";
+        let origins: Vec<&str> = default.split(',').map(|s| s.trim()).collect();
+        assert!(!origins.contains(&"*"));
+        assert!(origins.contains(&"https://enerby.dev"));
     }
 }
