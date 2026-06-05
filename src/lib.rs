@@ -388,11 +388,12 @@ fn extract_bearer_token(header: &str) -> &str {
 }
 
 /// Overwrite a String's heap memory with zeroes to prevent credential leakage
-/// after comparison. The String is then cleared to length 0.
+/// after comparison. Uses volatile writes to prevent compiler optimization from
+/// eliding the zeroing. The String is then cleared to length 0.
 fn zeroize_string(s: &mut String) {
     let bytes = unsafe { s.as_bytes_mut() };
     for byte in bytes.iter_mut() {
-        *byte = 0;
+        unsafe { std::ptr::write_volatile(byte, 0) };
     }
     s.clear();
 }
@@ -934,7 +935,7 @@ mod tests {
     fn merge_json_overflow_protection() {
         let inputs = vec![
             r#"{"a":1}"#.to_string(),
-            r#"{"a":1.8e308}"#.to_string(), // Near f64::MAX — sum overflows to infinity
+            r#"{"a":1.8e308}"#.to_string(), // Exceeds f64::MAX → parses to Infinity, skipped by is_finite()
         ];
         let result = merge_json_objects(&inputs);
         let parsed: serde_json::Map<String, serde_json::Value> =
