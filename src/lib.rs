@@ -430,12 +430,14 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 
     // Rate limit check (before auth to prevent auth-targeted flooding)
     if !check_rate_limit(&BEACON_COUNT, &BEACON_WINDOW_START, BEACON_MAX_PER_WINDOW) {
+        worker::console_error!("rate limit exceeded on beacon endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
 
     // Content-Type validation — must be application/json
     let content_type = req.headers().get("Content-Type")?.unwrap_or_default();
     if !content_type.to_lowercase().starts_with("application/json") {
+        worker::console_error!("beacon rejected: invalid Content-Type");
         return error_response(415, "unsupported media type", &cors);
     }
 
@@ -443,25 +445,37 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     let content_length: usize =
         req.headers().get("Content-Length")?.unwrap_or_default().parse().unwrap_or(0);
     if content_length > MAX_BEACON_BODY_BYTES {
+        worker::console_error!("beacon rejected: body exceeds 10KB limit");
         return error_response(413, "payload too large", &cors);
     }
 
     // Auth check
     if validate_auth(&req, &ctx).is_err() {
+        worker::console_error!("auth failed: missing or invalid Authorization header");
         return error_response(401, "unauthorized", &cors);
     }
 
     // Parse payload
     let payload: BeaconPayload = match req.json().await {
         Ok(p) => p,
-        Err(_) => return error_response(400, "invalid payload", &cors),
+        Err(_) => {
+            worker::console_error!("beacon rejected: payload parse failed");
+            return error_response(400, "invalid payload", &cors);
+        }
     };
 
     if validate_payload(&payload).is_err() {
+        worker::console_error!("beacon rejected: payload validation failed");
         return error_response(400, "invalid payload", &cors);
     }
 
-    let db = ctx.d1("DB")?;
+    let db = match ctx.d1("DB") {
+        Ok(database) => database,
+        Err(_) => {
+            worker::console_error!("database connection failed");
+            return error_response(500, "internal server error", &cors);
+        }
+    };
 
     let models_json =
         serde_json::to_string(&payload.stats.models_used).unwrap_or_else(|_| "{}".to_string());
@@ -494,9 +508,13 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 async fn handle_stats(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
     if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+        worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
-    let db = ctx.d1("DB")?;
+    let db = match ctx.d1("DB") {
+        Ok(database) => database,
+        Err(_) => return error_response(500, "internal server error", &cors),
+    };
 
     let stmt = worker::query!(
         &db,
@@ -516,9 +534,13 @@ async fn handle_stats(_req: Request, ctx: RouteContext<()>) -> Result<Response> 
 async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
     if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+        worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
-    let db = ctx.d1("DB")?;
+    let db = match ctx.d1("DB") {
+        Ok(database) => database,
+        Err(_) => return error_response(500, "internal server error", &cors),
+    };
 
     let stmt = worker::query!(
         &db,
@@ -543,9 +565,13 @@ async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response
 async fn handle_shield(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
     if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+        worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
-    let db = ctx.d1("DB")?;
+    let db = match ctx.d1("DB") {
+        Ok(database) => database,
+        Err(_) => return error_response(500, "internal server error", &cors),
+    };
 
     let stmt = worker::query!(
         &db,
