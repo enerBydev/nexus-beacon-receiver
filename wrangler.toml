@@ -10,6 +10,11 @@ binding = "DB"
 database_name = "nexus-beacon-db"
 database_id = "759b8e79-b7a6-4f43-bb3d-58045d44bb47"
 
+[triggers]
+crons = ["0 * * * *", "0 3 * * *"]
+# "0 * * * *"   — hourly aggregation of beacons into daily_global_stats
+# "0 3 * * *"   — daily 3am UTC cleanup (beacons >90d, stats >365d)
+
 [vars]
 CORS_ORIGINS = "https://enerby.dev,https://www.enerby.dev"
 
