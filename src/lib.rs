@@ -984,4 +984,88 @@ mod tests {
         assert!(!origins.contains(&"*"));
         assert!(origins.contains(&"https://enerby.dev"));
     }
+
+    // --- Phase 13: Additional security tests ---
+
+    #[test]
+    fn constant_time_eq_single_char() {
+        assert!(constant_time_eq("a", "a"));
+        assert!(!constant_time_eq("a", "b"));
+    }
+
+    #[test]
+    fn constant_time_eq_unicode() {
+        assert!(constant_time_eq("café", "café"));
+        assert!(!constant_time_eq("café", "cafe"));
+    }
+
+    #[test]
+    fn extract_bearer_token_tab_separator() {
+        // Tab is NOT a space — "Bearer\t" should NOT match
+        assert_eq!(extract_bearer_token("Bearer\tabc"), "Bearer\tabc");
+    }
+
+    #[test]
+    fn zeroize_string_empty() {
+        let mut s = String::new();
+        zeroize_string(&mut s);
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn validate_payload_empty_instance_id() {
+        let mut p = valid_test_payload();
+        p.instance_id = "".to_string();
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_empty_version() {
+        let mut p = valid_test_payload();
+        p.version = "".to_string();
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_version_invalid_chars() {
+        let mut p = valid_test_payload();
+        p.version = "0.19<script>".to_string();
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_total_requests_exceeds_max() {
+        let mut p = valid_test_payload();
+        p.stats.total_requests = MAX_TOTAL_REQUESTS + 1;
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn merge_json_non_object_input() {
+        // A non-object JSON string should be skipped gracefully
+        let inputs = vec![r#"5"#.to_string(), r#""hello""#.to_string()];
+        let result = merge_json_objects(&inputs);
+        assert_eq!(result, "{}");
+    }
+
+    #[test]
+    fn merge_json_float_preservation() {
+        let inputs = vec![r#"{"ratio":1.5}"#.to_string()];
+        let result = merge_json_objects(&inputs);
+        let parsed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&result).unwrap();
+        // 1.5 should stay as float, not become integer
+        assert_eq!(parsed.get("ratio").unwrap().as_f64().unwrap(), 1.5);
+    }
+
+    #[test]
+    fn retention_constants_correct() {
+        assert_eq!(BEACON_RETENTION_DAYS, 90);
+        assert_eq!(STATS_RETENTION_DAYS, 365);
+    }
+
+    #[test]
+    fn body_size_limit_correct() {
+        assert_eq!(MAX_BEACON_BODY_BYTES, 10_240);
+    }
 }
