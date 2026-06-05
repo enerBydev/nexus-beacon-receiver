@@ -32,8 +32,24 @@ const STATS_MAX_PER_WINDOW: u32 = 200;
 /// CF Workers recycle every ~10min, so counters naturally reset.
 const RATE_WINDOW_SECS: u64 = 60;
 
+/// Maximum allowed request body size for beacon endpoint (10KB).
+/// A normal beacon payload is ~500 bytes. 10KB provides 20x headroom.
+const MAX_BEACON_BODY_BYTES: usize = 10_240;
+
 /// Monotonic counter for approximate timekeeping (CF Workers WASM lacks SystemTime).
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+// ---------------------------------------------------------------------------
+// Input validation
+// ---------------------------------------------------------------------------
+
+/// Maximum field lengths to prevent D1 storage abuse.
+const MAX_INSTANCE_ID_LEN: usize = 64; // HMAC-SHA256 hex = 64 chars
+const MAX_VERSION_LEN: usize = 24; // "0.99.99-dev+metadata"
+const MAX_DATE_LEN: usize = 10; // "YYYY-MM-DD"
+const MAX_MAP_ENTRIES: usize = 50; // Max entries in models_used/client_types
+const MAX_TOTAL_REQUESTS: u64 = 10_000_000;
+const MAX_UNIQUE_FINGERPRINTS: u64 = 100_000;
 
 /// Get approximate current time in seconds.
 /// Uses a global request counter divided by an estimated requests-per-second rate.
@@ -234,6 +250,103 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     result == 0
 }
 
+/// Validate YYYY-MM-DD date format without regex (no regex crate in WASM).
+fn is_valid_date(s: &str) -> bool {
+    if s.len() != 10 {
+        return false;
+    }
+    let b = s.as_bytes();
+    b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4] == b'-'
+        && b[5].is_ascii_digit()
+        && b[6].is_ascii_digit()
+        && b[7] == b'-'
+        && b[8].is_ascii_digit()
+        && b[9].is_ascii_digit()
+}
+
+/// Validate beacon payload fields against security constraints.
+/// All error messages are generic to prevent information leakage.
+fn validate_payload(payload: &BeaconPayload) -> Result<(), &'static str> {
+    // Length checks
+    if payload.instance_id.is_empty() || payload.instance_id.len() > MAX_INSTANCE_ID_LEN {
+        return Err("invalid field length");
+    }
+    if payload.version.is_empty() || payload.version.len() > MAX_VERSION_LEN {
+        return Err("invalid field length");
+    }
+    if payload.date.is_empty() || payload.date.len() > MAX_DATE_LEN {
+        return Err("invalid field length");
+    }
+
+    // Format checks
+    // Instance ID must be hex (HMAC-SHA256 output)
+    if !payload.instance_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("invalid field format");
+    }
+    // Date must be YYYY-MM-DD
+    if !is_valid_date(&payload.date) {
+        return Err("invalid field format");
+    }
+    // Version must be semver-like (alphanumeric + .-_+)
+    if !payload
+        .version
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '+')
+    {
+        return Err("invalid field format");
+    }
+
+    // Numeric range checks
+    if payload.stats.total_requests > MAX_TOTAL_REQUESTS {
+        return Err("invalid field value");
+    }
+    if payload.stats.unique_fingerprints > MAX_UNIQUE_FINGERPRINTS {
+        return Err("invalid field value");
+    }
+    if payload.stats.avg_message_count < 0.0 || payload.stats.avg_message_count > 1000.0 {
+        return Err("invalid field value");
+    }
+    if payload.stats.tool_use_ratio < 0.0 || payload.stats.tool_use_ratio > 1.0 {
+        return Err("invalid field value");
+    }
+
+    // JSON map size checks
+    if payload.stats.models_used.len() > MAX_MAP_ENTRIES {
+        return Err("invalid field size");
+    }
+    if payload.stats.client_types.len() > MAX_MAP_ENTRIES {
+        return Err("invalid field size");
+    }
+
+    // JSON map value checks (prevent overflow and injection)
+    for (key, value) in &payload.stats.models_used {
+        if key.len() > 128 {
+            return Err("invalid field size");
+        }
+        if let Some(n) = value.as_f64() {
+            if !n.is_finite() || !(0.0..=1_000_000_000.0).contains(&n) {
+                return Err("invalid field value");
+            }
+        }
+    }
+    for (key, value) in &payload.stats.client_types {
+        if key.len() > 128 {
+            return Err("invalid field size");
+        }
+        if let Some(n) = value.as_f64() {
+            if !n.is_finite() || !(0.0..=1_000_000_000.0).contains(&n) {
+                return Err("invalid field value");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Case-insensitive "Bearer " prefix extraction from Authorization header.
 /// Per RFC 7235, the auth-scheme token is case-insensitive.
 fn extract_bearer_token(header: &str) -> &str {
@@ -285,6 +398,19 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         return error_response(429, "rate limit exceeded", &cors);
     }
 
+    // Content-Type validation — must be application/json
+    let content_type = req.headers().get("Content-Type")?.unwrap_or_default();
+    if !content_type.to_lowercase().starts_with("application/json") {
+        return error_response(415, "unsupported media type", &cors);
+    }
+
+    // Body size limit check
+    let content_length: usize =
+        req.headers().get("Content-Length")?.unwrap_or_default().parse().unwrap_or(0);
+    if content_length > MAX_BEACON_BODY_BYTES {
+        return error_response(413, "payload too large", &cors);
+    }
+
     // Auth check
     if validate_auth(&req, &ctx).is_err() {
         return error_response(401, "unauthorized", &cors);
@@ -296,9 +422,8 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         Err(_) => return error_response(400, "invalid payload", &cors),
     };
 
-    // Basic validation
-    if payload.instance_id.is_empty() || payload.date.is_empty() || payload.version.is_empty() {
-        return error_response(400, "missing required field", &cors);
+    if validate_payload(&payload).is_err() {
+        return error_response(400, "invalid payload", &cors);
     }
 
     let db = ctx.d1("DB")?;
@@ -611,5 +736,82 @@ mod tests {
         }
         // 11th request should be blocked
         assert!(!check_rate_limit(&TEST_COUNT, &TEST_WINDOW, 10));
+    }
+
+    // --- Payload validation tests ---
+
+    fn valid_test_payload() -> BeaconPayload {
+        BeaconPayload {
+            instance_id: "a".repeat(64),
+            version: "0.19.0".to_string(),
+            date: "2026-06-04".to_string(),
+            stats: BeaconStats {
+                total_requests: 100,
+                unique_fingerprints: 10,
+                models_used: serde_json::Map::new(),
+                client_types: serde_json::Map::new(),
+                avg_message_count: 5.0,
+                tool_use_ratio: 0.5,
+            },
+        }
+    }
+
+    #[test]
+    fn validate_payload_valid() {
+        assert!(validate_payload(&valid_test_payload()).is_ok());
+    }
+
+    #[test]
+    fn validate_payload_instance_id_too_long() {
+        let mut p = valid_test_payload();
+        p.instance_id = "a".repeat(65);
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_invalid_date() {
+        let mut p = valid_test_payload();
+        p.date = "not-a-date".to_string();
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_non_hex_instance_id() {
+        let mut p = valid_test_payload();
+        p.instance_id = "g".repeat(64);
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_tool_use_ratio_out_of_range() {
+        let mut p = valid_test_payload();
+        p.stats.tool_use_ratio = 1.5;
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn validate_payload_infinity_in_models_used() {
+        // Test the is_finite() check directly
+        let inf = f64::INFINITY;
+        assert!(!inf.is_finite());
+    }
+
+    #[test]
+    fn validate_payload_too_many_map_entries() {
+        let mut p = valid_test_payload();
+        for i in 0..51 {
+            p.stats.models_used.insert(format!("model-{}", i), serde_json::Value::from(1));
+        }
+        assert!(validate_payload(&p).is_err());
+    }
+
+    #[test]
+    fn is_valid_date_formats() {
+        assert!(is_valid_date("2026-06-04"));
+        assert!(is_valid_date("2025-01-31"));
+        assert!(!is_valid_date("2026/06/04"));
+        assert!(!is_valid_date("not-a-date"));
+        assert!(!is_valid_date("2026-6-4"));
+        assert!(!is_valid_date(""));
     }
 }
