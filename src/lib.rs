@@ -166,12 +166,52 @@ fn error_response(status: u16, msg: &'static str, cors: &Cors) -> Result<Respons
     Response::from_json(&ErrorResponse { error: msg })?.with_status(status).with_cors(cors)
 }
 
+/// Constant-time string comparison resistant to timing side-channel attacks.
+/// XORs all bytes and ORs length difference so comparison time is independent
+/// of where strings differ. Does NOT use ring/subtle (won't compile to wasm32).
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let mut result: u8 = 0;
+    for i in 0..a_bytes.len().min(b_bytes.len()) {
+        result |= a_bytes[i] ^ b_bytes[i];
+    }
+    result |= (a_bytes.len() != b_bytes.len()) as u8;
+    result == 0
+}
+
+/// Case-insensitive "Bearer " prefix extraction from Authorization header.
+/// Per RFC 7235, the auth-scheme token is case-insensitive.
+fn extract_bearer_token(header: &str) -> &str {
+    if header.len() >= 7 {
+        let prefix = &header[..7];
+        if prefix.eq_ignore_ascii_case("Bearer ") {
+            return &header[7..];
+        }
+    }
+    header
+}
+
+/// Overwrite a String's heap memory with zeroes to prevent credential leakage
+/// after comparison. The String is then cleared to length 0.
+fn zeroize_string(s: &mut String) {
+    let bytes = unsafe { s.as_bytes_mut() };
+    for byte in bytes.iter_mut() {
+        *byte = 0;
+    }
+    s.clear();
+}
+
 /// Validate the `Authorization: Bearer <token>` header against the secret.
 fn validate_auth(req: &Request, ctx: &RouteContext<()>) -> Result<()> {
-    let expected = ctx.secret("BEACON_AUTH_TOKEN")?.to_string();
+    let mut expected = ctx.secret("BEACON_AUTH_TOKEN")?.to_string();
     let header = req.headers().get("Authorization")?.unwrap_or_default();
-    let token = header.strip_prefix("Bearer ").unwrap_or(&header);
-    if token == expected {
+    let token = extract_bearer_token(&header);
+
+    let is_valid = constant_time_eq(token, &expected);
+    zeroize_string(&mut expected);
+
+    if is_valid {
         Ok(())
     } else {
         Err(Error::RustError("unauthorized".into()))
@@ -424,5 +464,56 @@ mod tests {
     #[test]
     fn merge_versions_empty() {
         assert_eq!(merge_versions(&[]), "{}");
+    }
+
+    #[test]
+    fn constant_time_eq_equal_strings() {
+        assert!(constant_time_eq("abc123", "abc123"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_strings() {
+        assert!(!constant_time_eq("abc123", "abc124"));
+        assert!(!constant_time_eq("abc123", "abc1234"));
+        assert!(!constant_time_eq("short", "much_longer_string"));
+    }
+
+    #[test]
+    fn constant_time_eq_empty_strings() {
+        assert!(constant_time_eq("", ""));
+        assert!(!constant_time_eq("", "a"));
+    }
+
+    #[test]
+    fn extract_bearer_token_standard() {
+        assert_eq!(extract_bearer_token("Bearer abc123"), "abc123");
+    }
+
+    #[test]
+    fn extract_bearer_token_lowercase() {
+        assert_eq!(extract_bearer_token("bearer abc123"), "abc123");
+    }
+
+    #[test]
+    fn extract_bearer_token_mixed_case() {
+        assert_eq!(extract_bearer_token("BEARER abc123"), "abc123");
+    }
+
+    #[test]
+    fn extract_bearer_token_no_prefix() {
+        assert_eq!(extract_bearer_token("abc123"), "abc123");
+    }
+
+    #[test]
+    fn extract_bearer_token_empty_after_prefix() {
+        assert_eq!(extract_bearer_token("Bearer "), "");
+    }
+
+    #[test]
+    fn zeroize_string_clears_content() {
+        let mut s = String::from("secret_token_value");
+        zeroize_string(&mut s);
+        assert_eq!(s.len(), 0);
+        assert_eq!(s, "");
     }
 }
