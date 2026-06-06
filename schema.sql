@@ -33,3 +33,6 @@ CREATE TABLE IF NOT EXISTS daily_global_stats (
 CREATE INDEX IF NOT EXISTS idx_beacons_date ON beacons(date);
 CREATE INDEX IF NOT EXISTS idx_beacons_instance ON beacons(instance_id);
 CREATE INDEX IF NOT EXISTS idx_beacons_instance_date ON beacons(instance_id, date);
+
+-- Index for ORDER BY date DESC queries (stats endpoint)
+CREATE INDEX IF NOT EXISTS idx_global_stats_date_desc ON daily_global_stats(date DESC);
