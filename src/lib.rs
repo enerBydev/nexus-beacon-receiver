@@ -25,7 +25,7 @@ mod domain;
 mod infrastructure;
 
 use crate::config::*;
-use serde::{Deserialize, Serialize};
+use crate::domain::types::*;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use worker::*;
 
@@ -80,36 +80,6 @@ fn check_rate_limit(count: &AtomicU32, window_start: &AtomicU64, max_per_window:
 // Data types
 // ---------------------------------------------------------------------------
 
-/// Incoming beacon payload from a NEXUS-AI-Gateway instance.
-#[derive(Deserialize)]
-struct BeaconPayload {
-    instance_id: String,
-    version: String,
-    date: String,
-    stats: BeaconStats,
-}
-
-/// Per-instance daily statistics inside the beacon payload.
-#[derive(Deserialize)]
-struct BeaconStats {
-    total_requests: u64,
-    unique_fingerprints: u64,
-    #[serde(default)]
-    models_used: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    client_types: serde_json::Map<String, serde_json::Value>,
-    avg_message_count: f64,
-    tool_use_ratio: f64,
-}
-
-/// Row from the `beacons` table used for JSON merge aggregation.
-#[derive(Deserialize)]
-struct BeaconRow {
-    models_used: String,
-    client_types: String,
-    version: String,
-}
-
 /// Merge multiple JSON objects from beacons into a single aggregated object.
 /// Each numeric value is summed across all objects (supports both integers and floats).
 fn merge_json_objects(json_strings: &[String]) -> String {
@@ -159,63 +129,6 @@ fn merge_versions(versions: &[String]) -> String {
         }
     }
     serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string())
-}
-
-/// Result of numeric aggregation query for daily_global_stats.
-#[derive(Deserialize)]
-struct AggregationResult {
-    total_instances: i64,
-    total_requests: i64,
-    total_unique_users: i64,
-    avg_message_count: f64,
-    tool_use_ratio: f64,
-}
-
-/// Row from the `daily_global_stats` D1 table.
-#[derive(Serialize, Deserialize)]
-struct DailyGlobalStats {
-    date: String,
-    total_instances: i64,
-    total_requests: i64,
-    total_unique_users: i64,
-    models_used: String,
-    client_types: String,
-    avg_message_count: f64,
-    tool_use_ratio: f64,
-    versions: String,
-}
-
-/// Response for `GET /v1/stats`.
-#[derive(Serialize)]
-struct StatsResponse {
-    stats: Vec<DailyGlobalStats>,
-}
-
-/// Response for `GET /v1/stats/summary`.
-#[derive(Serialize, Deserialize)]
-struct SummaryResponse {
-    total_instances: i64,
-    total_requests: i64,
-    total_unique_users: i64,
-    days_active: i64,
-}
-
-/// Generic error response body.
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: &'static str,
-}
-
-/// Response for `GET /v1/stats/shield` - Shields.io endpoint badge format.
-#[derive(Serialize)]
-struct ShieldResponse {
-    #[serde(rename = "schemaVersion")]
-    schema_version: u8,
-    label: &'static str,
-    message: String,
-    color: &'static str,
-    #[serde(rename = "namedLogo")]
-    named_logo: &'static str,
 }
 
 // ---------------------------------------------------------------------------
