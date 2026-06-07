@@ -24,9 +24,13 @@ mod config;
 mod domain;
 mod infrastructure;
 
+use crate::config::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use worker::*;
+
+/// Monotonic counter for approximate timekeeping (CF Workers WASM lacks SystemTime).
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // Rate limiting (in-memory, lock-free)
@@ -35,35 +39,10 @@ use worker::*;
 /// Beacon endpoint: 100 requests per window
 static BEACON_COUNT: AtomicU32 = AtomicU32::new(0);
 static BEACON_WINDOW_START: AtomicU64 = AtomicU64::new(0);
-const BEACON_MAX_PER_WINDOW: u32 = 100;
 
 /// Stats endpoints: 200 requests per window
 static STATS_COUNT: AtomicU32 = AtomicU32::new(0);
 static STATS_WINDOW_START: AtomicU64 = AtomicU64::new(0);
-const STATS_MAX_PER_WINDOW: u32 = 200;
-
-/// Window duration in approximate seconds.
-/// CF Workers recycle every ~10min, so counters naturally reset.
-const RATE_WINDOW_SECS: u64 = 60;
-
-/// Maximum allowed request body size for beacon endpoint (10KB).
-/// A normal beacon payload is ~500 bytes. 10KB provides 20x headroom.
-const MAX_BEACON_BODY_BYTES: usize = 10_240;
-
-/// Monotonic counter for approximate timekeeping (CF Workers WASM lacks SystemTime).
-static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-// ---------------------------------------------------------------------------
-// Input validation
-// ---------------------------------------------------------------------------
-
-/// Maximum field lengths to prevent D1 storage abuse.
-const MAX_INSTANCE_ID_LEN: usize = 64; // HMAC-SHA256 hex = 64 chars
-const MAX_VERSION_LEN: usize = 24; // "0.99.99-dev+metadata"
-const MAX_DATE_LEN: usize = 10; // "YYYY-MM-DD"
-const MAX_MAP_ENTRIES: usize = 50; // Max entries in models_used/client_types
-const MAX_TOTAL_REQUESTS: u64 = 10_000_000;
-const MAX_UNIQUE_FINGERPRINTS: u64 = 100_000;
 
 /// Get approximate current time in seconds.
 /// Uses a global request counter divided by an estimated requests-per-second rate.
@@ -625,9 +604,6 @@ fn handle_options(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
 // ---------------------------------------------------------------------------
 
 /// Retention periods for data cleanup.
-const BEACON_RETENTION_DAYS: i64 = 90;
-const STATS_RETENTION_DAYS: i64 = 365;
-
 /// Scheduled event handler for periodic aggregation and cleanup.
 /// Triggered by Cron: "0 * * * *" (every hour) for aggregation,
 /// and "0 3 * * *" (daily 3am UTC) for cleanup.
