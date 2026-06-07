@@ -19,6 +19,11 @@
 // Suppress unused_must_use at crate level to allow clippy -- -D warnings.
 #![allow(unused_must_use)]
 
+mod adapters;
+mod config;
+mod domain;
+mod infrastructure;
+
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use worker::*;

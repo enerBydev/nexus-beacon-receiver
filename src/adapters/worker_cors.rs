@@ -1,0 +1,1 @@
+//! WorkerCorsProvider — CorsProvider implementation.
