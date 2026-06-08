@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 /// Incoming beacon payload from a NEXUS-AI-Gateway instance.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct BeaconPayload {
     pub instance_id: String,
     pub version: String,
@@ -13,7 +13,7 @@ pub struct BeaconPayload {
 }
 
 /// Per-instance daily statistics inside the beacon payload.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct BeaconStats {
     pub total_requests: u64,
     pub unique_fingerprints: u64,
