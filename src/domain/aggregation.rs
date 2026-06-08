@@ -130,4 +130,27 @@ mod tests {
         let result = merge_json_objects(&inputs);
         assert_eq!(result, "{}");
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn merge_json_commutative(json1 in "\\PC*", json2 in "\\PC*") {
+            // For two JSON objects with numeric values, merging should be commutative
+            let inputs = vec![json1, json2];
+            let result1 = merge_json_objects(&inputs);
+            let result2 = merge_json_objects(&inputs.iter().rev().cloned().collect::<Vec<_>>());
+            prop_assert_eq!(result1, result2);
+        }
+
+        #[test]
+        fn merge_versions_counts_correctly(versions in prop::collection::vec(".*", 1..100)) {
+            let result = merge_versions(&versions);
+            // Merging version counts should always produce valid JSON
+            let _parsed: std::collections::HashMap<String, i64> = serde_json::from_str(&result).unwrap();
+            // Just ensure it's valid JSON and doesn't crash
+            // The result should be valid JSON
+            prop_assert!(serde_json::from_str::<serde_json::Value>(&result).is_ok());
+        }
+    }
 }

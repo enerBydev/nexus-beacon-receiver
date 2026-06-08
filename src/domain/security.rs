@@ -120,4 +120,30 @@ mod tests {
         zeroize_string(&mut s);
         assert_eq!(s, "");
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn constant_time_eq_reflexive(a in ".*") {
+            // For any string `a`, `constant_time_eq(a, a)` is true
+            prop_assert!(constant_time_eq(&a, &a));
+        }
+
+        #[test]
+        fn constant_time_eq_symmetric(a in ".*", b in ".*") {
+            // For any strings `a, b`, `constant_time_eq(a, b) == constant_time_eq(b, a)`
+            let result1 = constant_time_eq(&a, &b);
+            let result2 = constant_time_eq(&b, &a);
+            prop_assert_eq!(result1, result2);
+        }
+
+        #[test]
+        fn constant_time_eq_negation(a in ".*", b in ".*") {
+            // For any strings `a, b` where `a != b`, `constant_time_eq(a, b)` is false
+            if a != b {
+                prop_assert!(!constant_time_eq(&a, &b));
+            }
+        }
+    }
 }

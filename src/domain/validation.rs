@@ -249,4 +249,48 @@ mod tests {
         }
         assert!(validate_payload(&p).is_err());
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn is_valid_date_never_accepts_wrong_length(s in "\\PC*") {
+            // Any string not exactly 10 chars should be rejected
+            if s.len() != 10 {
+                prop_assert!(!is_valid_date(&s));
+            }
+        }
+
+        #[test]
+        fn is_valid_date_rejects_non_digit_separators(
+            prefix in "[0-9]{4}",
+            separator1 in "[^-]",
+            middle in "[0-9]{2}",
+            separator2 in "[^-]",
+            suffix in "[0-9]{2}"
+        ) {
+            // Create a date string with non-dash separators
+            let date = format!("{}{}{}{}{}", prefix, separator1, middle, separator2, suffix);
+            // If the separators aren't dashes at positions 4 and 7, it should be rejected
+            if separator1 != "-" || separator2 != "-" {
+                prop_assert!(!is_valid_date(&date));
+            }
+        }
+
+        #[test]
+        fn validate_payload_rejects_empty_instance_id(_s in "[a-z0-9]*") {
+            // Create a valid payload but with empty instance_id
+            let mut payload = valid_test_payload();
+            payload.instance_id = "".to_string();
+            prop_assert!(validate_payload(&payload).is_err());
+        }
+
+        #[test]
+        fn validate_payload_rejects_overlength_instance_id(_s in "[a-z0-9]*") {
+            // Create a valid payload but with overlength instance_id
+            let mut payload = valid_test_payload();
+            payload.instance_id = "a".repeat(MAX_INSTANCE_ID_LEN + 1);
+            prop_assert!(validate_payload(&payload).is_err());
+        }
+    }
 }
