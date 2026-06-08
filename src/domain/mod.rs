@@ -15,8 +15,5 @@ pub mod validation;
 pub use self::aggregation::merge_json_objects;
 pub use self::aggregation::merge_versions;
 pub use self::rate_limit::{RateLimiter, BEACON_RATE_LIMITER, STATS_RATE_LIMITER};
-pub use self::security::constant_time_eq;
-pub use self::security::extract_bearer_token;
-pub use self::security::zeroize_string;
 pub use self::types::*;
 pub use self::validation::validate_payload;

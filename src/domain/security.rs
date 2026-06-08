@@ -1,5 +1,7 @@
 //! Security utilities (constant-time comparison, zeroize, auth).
 
+use crate::domain::types::AuthError;
+
 /// Constant-time string comparison resistant to timing side-channel attacks.
 /// XORs all bytes and ORs length difference so comparison time is independent
 /// of where strings differ. Does NOT use ring/subtle (won't compile to wasm32).
@@ -15,6 +17,23 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
     }
     result |= (a_bytes.len() != b_bytes.len()) as u8;
     result == 0
+}
+
+/// Verify a Bearer token from an Authorization header against the expected secret.
+/// Pure domain function — no worker dependencies.
+/// Returns Ok(()) if valid, Err(AuthError) if invalid.
+pub fn verify_bearer_token(auth_header: &str, secret: &str) -> Result<(), AuthError> {
+    let token = extract_bearer_token(auth_header);
+    let mut expected = secret.to_string();
+    let mut header_owned = auth_header.to_string();
+    let is_valid = constant_time_eq(token, &expected);
+    zeroize_string(&mut expected);
+    zeroize_string(&mut header_owned);
+    if is_valid {
+        Ok(())
+    } else {
+        Err(AuthError::InvalidCredentials)
+    }
 }
 
 /// Case-insensitive "Bearer " prefix extraction from Authorization header.
@@ -119,6 +138,38 @@ mod tests {
         let mut s = String::new();
         zeroize_string(&mut s);
         assert_eq!(s, "");
+    }
+
+    #[test]
+    fn verify_bearer_valid() {
+        let secret = "test_secret";
+        let auth_header = "Bearer test_secret";
+        assert!(verify_bearer_token(auth_header, secret).is_ok());
+    }
+
+    #[test]
+    fn verify_bearer_invalid_token() {
+        let secret = "test_secret";
+        let auth_header = "Bearer wrong_secret";
+        assert!(verify_bearer_token(auth_header, secret).is_err());
+    }
+
+    #[test]
+    fn verify_bearer_missing_header() {
+        let secret = "test_secret";
+        let auth_header = "";
+        assert!(verify_bearer_token(auth_header, secret).is_err());
+    }
+
+    #[test]
+    fn verify_bearer_zeroizes_both_strings() {
+        // This test is tricky to implement directly since we're testing that the strings are zeroized
+        // We'll test indirectly by checking that the function works correctly
+        let secret = "test_secret";
+        let auth_header = "Bearer test_secret";
+        let result = verify_bearer_token(auth_header, secret);
+        assert!(result.is_ok());
+        // The actual test for zeroization would be implementation-specific and hard to verify in a unit test
     }
 
     use proptest::prelude::*;

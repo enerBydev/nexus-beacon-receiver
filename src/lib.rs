@@ -24,7 +24,9 @@ mod config;
 mod domain;
 mod infrastructure;
 
+use crate::adapters::worker_auth::WorkerAuthProvider;
 use crate::config::*;
+use crate::domain::ports::AuthProvider;
 use crate::domain::RateLimiter;
 use crate::domain::*;
 use worker::*;
@@ -59,29 +61,6 @@ fn error_response(status: u16, msg: &'static str, cors: &Cors) -> Result<Respons
     Response::from_json(&ErrorResponse { error: msg })?.with_status(status).with_cors(cors)
 }
 
-/// Validate the `Authorization: Bearer <token>` header against the secret.
-/// Returns Result<(), ()> to avoid exposing Rust internals via Error::RustError.
-fn validate_auth(req: &Request, ctx: &RouteContext<()>) -> Result<(), ()> {
-    let mut expected = match ctx.secret("BEACON_AUTH_TOKEN") {
-        Ok(s) => s.to_string(),
-        Err(_) => return Err(()),
-    };
-    let mut header = match req.headers().get("Authorization") {
-        Ok(Some(h)) => h,
-        _ => return Err(()),
-    };
-    let token = extract_bearer_token(&header);
-    let is_valid = constant_time_eq(token, &expected);
-    zeroize_string(&mut expected);
-    zeroize_string(&mut header);
-
-    if is_valid {
-        Ok(())
-    } else {
-        Err(())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
@@ -112,7 +91,9 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     }
 
     // Auth check
-    if validate_auth(&req, &ctx).is_err() {
+    let auth_provider = WorkerAuthProvider::new(&ctx);
+    let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
+    if auth_provider.validate_auth(&auth_header).is_err() {
         worker::console_error!("auth failed: missing or invalid Authorization header");
         return error_response(401, "unauthorized", &cors);
     }
