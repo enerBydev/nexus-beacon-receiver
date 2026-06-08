@@ -25,59 +25,9 @@ mod domain;
 mod infrastructure;
 
 use crate::config::*;
-use crate::domain::aggregation::*;
-use crate::domain::security::*;
-use crate::domain::types::*;
-use crate::domain::validation::*;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use crate::domain::RateLimiter;
+use crate::domain::*;
 use worker::*;
-
-/// Monotonic counter for approximate timekeeping (CF Workers WASM lacks SystemTime).
-static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-// ---------------------------------------------------------------------------
-// Rate limiting (in-memory, lock-free)
-// ---------------------------------------------------------------------------
-
-/// Beacon endpoint: 100 requests per window
-static BEACON_COUNT: AtomicU32 = AtomicU32::new(0);
-static BEACON_WINDOW_START: AtomicU64 = AtomicU64::new(0);
-
-/// Stats endpoints: 200 requests per window
-static STATS_COUNT: AtomicU32 = AtomicU32::new(0);
-static STATS_WINDOW_START: AtomicU64 = AtomicU64::new(0);
-
-/// Get approximate current time in seconds.
-/// Uses a global request counter divided by an estimated requests-per-second rate.
-/// This is imprecise but sufficient for defense-in-depth rate limiting.
-/// CF Rate Limiting Rules (platform-level) provide precise time-based limiting.
-fn now_approx_secs() -> u64 {
-    let count = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Rough approximation: ~100 requests/sec for a telemetry worker
-    count / 100
-}
-
-/// Check if a request is allowed under the rate limit.
-/// Uses atomic counters for lock-free concurrent access.
-/// Returns false if the rate limit has been exceeded.
-fn check_rate_limit(count: &AtomicU32, window_start: &AtomicU64, max_per_window: u32) -> bool {
-    let now = now_approx_secs();
-    let last_reset = window_start.load(Ordering::Relaxed);
-
-    // Reset window if expired
-    if now > last_reset && now - last_reset > RATE_WINDOW_SECS {
-        // CAS to prevent double-reset race between concurrent requests
-        if window_start
-            .compare_exchange(last_reset, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
-        {
-            count.store(0, Ordering::Relaxed);
-        }
-    }
-
-    let current = count.fetch_add(1, Ordering::Relaxed);
-    current < max_per_window
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,7 +91,7 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     let cors = cors_config(&ctx);
 
     // Rate limit check (before auth to prevent auth-targeted flooding)
-    if !check_rate_limit(&BEACON_COUNT, &BEACON_WINDOW_START, BEACON_MAX_PER_WINDOW) {
+    if !BEACON_RATE_LIMITER.check(BEACON_MAX_PER_WINDOW) {
         worker::console_error!("rate limit exceeded on beacon endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
@@ -219,7 +169,7 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 /// `GET /v1/stats` — return detailed stats for the last 30 days.
 async fn handle_stats(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
         worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
@@ -245,7 +195,7 @@ async fn handle_stats(_req: Request, ctx: RouteContext<()>) -> Result<Response> 
 /// `GET /v1/stats/summary` — lightweight aggregated numbers.
 async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
         worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
@@ -276,7 +226,7 @@ async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response
 /// `GET /v1/stats/shield` — Shields.io compatible badge data.
 async fn handle_shield(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !check_rate_limit(&STATS_COUNT, &STATS_WINDOW_START, STATS_MAX_PER_WINDOW) {
+    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
         worker::console_error!("rate limit exceeded on stats endpoint");
         return error_response(429, "rate limit exceeded", &cors);
     }
@@ -464,34 +414,6 @@ mod tests {
     #[test]
     fn merge_versions_empty() {
         assert_eq!(merge_versions(&[]), "{}");
-    }
-
-    #[test]
-    fn rate_limit_allows_under_limit() {
-        static TEST_COUNT: AtomicU32 = AtomicU32::new(0);
-        static TEST_WINDOW: AtomicU64 = AtomicU64::new(0);
-        TEST_COUNT.store(0, Ordering::Relaxed);
-        TEST_WINDOW.store(0, Ordering::Relaxed);
-        REQUEST_COUNTER.store(0, Ordering::Relaxed);
-
-        for _ in 0..5 {
-            assert!(check_rate_limit(&TEST_COUNT, &TEST_WINDOW, 10));
-        }
-    }
-
-    #[test]
-    fn rate_limit_blocks_over_limit() {
-        static TEST_COUNT: AtomicU32 = AtomicU32::new(0);
-        static TEST_WINDOW: AtomicU64 = AtomicU64::new(0);
-        TEST_COUNT.store(0, Ordering::Relaxed);
-        TEST_WINDOW.store(0, Ordering::Relaxed);
-        REQUEST_COUNTER.store(10000, Ordering::Relaxed); // Avoid window reset during test
-
-        for _ in 0..10 {
-            check_rate_limit(&TEST_COUNT, &TEST_WINDOW, 10);
-        }
-        // 11th request should be blocked
-        assert!(!check_rate_limit(&TEST_COUNT, &TEST_WINDOW, 10));
     }
 
     #[test]
