@@ -35,25 +35,28 @@ use worker::*;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build the CORS configuration from the `CORS_ORIGINS` env var.
-fn cors_config(ctx: &RouteContext<()>) -> Cors {
-    let origins: Vec<String> = ctx
-        .var("CORS_ORIGINS")
-        .map(|v| v.to_string())
-        .unwrap_or_else(|_| {
-            // Fail-closed: only allow production domains when config is missing
-            "https://enerby.dev,https://www.enerby.dev".to_string()
-        })
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+use crate::adapters::worker_cors::WorkerCorsProvider;
+use crate::domain::ports::CorsProvider;
 
+/// Build the CORS configuration from WorkerCorsProvider.
+fn cors_config(ctx: &RouteContext<()>) -> Cors {
+    let provider = WorkerCorsProvider::new(ctx);
     Cors::new()
-        .with_origins(origins)
-        .with_methods(vec![Method::Get, Method::Post, Method::Options])
-        .with_allowed_headers(vec!["Content-Type", "Authorization"])
-        .with_max_age(86400)
+        .with_origins(provider.origins())
+        .with_methods(
+            provider
+                .methods()
+                .iter()
+                .map(|m| match m.as_str() {
+                    "GET" => Method::Get,
+                    "POST" => Method::Post,
+                    "OPTIONS" => Method::Options,
+                    _ => Method::Get, // Default case, should never happen for the allowed methods
+                })
+                .collect::<Vec<_>>(),
+        )
+        .with_allowed_headers(provider.allowed_headers())
+        .with_max_age(provider.max_age())
 }
 
 /// Create a JSON error response with CORS headers.

@@ -5,6 +5,7 @@
 //! No code in this module may depend on the `worker` crate.
 
 pub mod aggregation;
+pub mod cors;
 pub mod ports;
 pub mod rate_limit;
 pub mod security;
