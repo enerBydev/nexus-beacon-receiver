@@ -21,3 +21,4 @@ lto = true
 
 [dev-dependencies]
 proptest = "1"
+mockall = "0.13"

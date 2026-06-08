@@ -64,7 +64,7 @@ pub struct StatsResponse {
     pub stats: Vec<DailyGlobalStats>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SummaryResponse {
     pub total_instances: i64,
     pub total_requests: i64,
