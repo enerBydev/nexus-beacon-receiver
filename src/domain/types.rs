@@ -45,7 +45,7 @@ pub struct AggregationResult {
 }
 
 /// Row from the `daily_global_stats` D1 table.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct DailyGlobalStats {
     pub date: String,
     pub total_instances: i64,
@@ -59,7 +59,7 @@ pub struct DailyGlobalStats {
 }
 
 /// Response for `GET /v1/stats`.
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 pub struct StatsResponse {
     pub stats: Vec<DailyGlobalStats>,
 }
