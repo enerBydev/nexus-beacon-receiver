@@ -4,8 +4,6 @@
 //! through port traits. Services have zero worker dependencies — they
 //! are fully testable with mockall.
 
-#![allow(dead_code)] // Services used by handlers in Phase 14
-
 use crate::domain::ports::{AuthProvider, BeaconRepository};
 use crate::domain::rate_limit::RateLimiter;
 use crate::domain::types::{
@@ -21,20 +19,20 @@ use crate::domain::validation::validate_payload;
 ///
 /// Orchestrates: rate limit → content-type → body-size → auth → validate → repo upsert.
 /// Returns a [`BeaconResult`] variant that the handler maps to an HTTP response.
-pub struct BeaconService<R: BeaconRepository, A: AuthProvider> {
+pub struct BeaconService<'a, R: BeaconRepository, A: AuthProvider> {
     repo: R,
     auth: A,
-    rate_limiter: Box<dyn RateLimiter>,
+    rate_limiter: &'a dyn RateLimiter,
     beacon_max_per_window: u32,
     max_body_bytes: usize,
 }
 
-impl<R: BeaconRepository, A: AuthProvider> BeaconService<R, A> {
+impl<'a, R: BeaconRepository, A: AuthProvider> BeaconService<'a, R, A> {
     /// Create a new BeaconService with the given dependencies.
     pub fn new(
         repo: R,
         auth: A,
-        rate_limiter: Box<dyn RateLimiter>,
+        rate_limiter: &'a dyn RateLimiter,
         beacon_max_per_window: u32,
         max_body_bytes: usize,
     ) -> Self {
@@ -93,15 +91,15 @@ impl<R: BeaconRepository, A: AuthProvider> BeaconService<R, A> {
 /// Service for retrieving aggregated statistics.
 ///
 /// All methods check the rate limiter before delegating to the repository.
-pub struct StatsService<R: BeaconRepository> {
+pub struct StatsService<'a, R: BeaconRepository> {
     repo: R,
-    rate_limiter: Box<dyn RateLimiter>,
+    rate_limiter: &'a dyn RateLimiter,
     stats_max_per_window: u32,
 }
 
-impl<R: BeaconRepository> StatsService<R> {
+impl<'a, R: BeaconRepository> StatsService<'a, R> {
     /// Create a new StatsService with the given dependencies.
-    pub fn new(repo: R, rate_limiter: Box<dyn RateLimiter>, stats_max_per_window: u32) -> Self {
+    pub fn new(repo: R, rate_limiter: &'a dyn RateLimiter, stats_max_per_window: u32) -> Self {
         Self { repo, rate_limiter, stats_max_per_window }
     }
 
@@ -151,12 +149,14 @@ impl<R: BeaconRepository> StatsService<R> {
 /// Service for scheduled data aggregation and cleanup.
 ///
 /// Orchestrates: find dates needing aggregation → aggregate each → cleanup old data.
+#[allow(dead_code)] // Used by scheduled handler in Phase 16
 pub struct AggregationService<R: BeaconRepository> {
     repo: R,
     beacon_retention_days: i64,
     stats_retention_days: i64,
 }
 
+#[allow(dead_code)] // Used by scheduled handler in Phase 16
 impl<R: BeaconRepository> AggregationService<R> {
     /// Create a new AggregationService with the given retention periods.
     pub fn new(repo: R, beacon_retention_days: i64, stats_retention_days: i64) -> Self {
@@ -248,7 +248,7 @@ mod tests {
         let auth = MockTestAuthProvider::new();
         let repo = MockTestRepo::new();
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 100, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::RateLimited);
@@ -262,7 +262,7 @@ mod tests {
         let auth = MockTestAuthProvider::new();
         let repo = MockTestRepo::new();
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result = svc.receive_beacon("text/plain", 100, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::InvalidContentType);
     }
@@ -275,7 +275,7 @@ mod tests {
         let auth = MockTestAuthProvider::new();
         let repo = MockTestRepo::new();
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 20_000, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::PayloadTooLarge);
@@ -291,7 +291,7 @@ mod tests {
 
         let repo = MockTestRepo::new();
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 100, "Bearer wrong", &valid_payload()).await;
         assert_eq!(result, BeaconResult::Unauthorized);
@@ -307,7 +307,7 @@ mod tests {
 
         let repo = MockTestRepo::new();
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         // Empty instance_id is invalid
         let bad_payload = BeaconPayload {
             instance_id: String::new(),
@@ -339,7 +339,7 @@ mod tests {
         repo.expect_upsert_beacon()
             .returning(|_| Err(RepositoryError::DatabaseError("fail".to_string())));
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 100, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::InternalError);
@@ -356,7 +356,7 @@ mod tests {
         let mut repo = MockTestRepo::new();
         repo.expect_upsert_beacon().returning(|_| Ok(()));
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 100, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::Success);
@@ -377,7 +377,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let svc = BeaconService::new(repo, auth, Box::new(rl), 100, 10_240);
+        let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         let result =
             svc.receive_beacon("application/json", 100, "Bearer token", &valid_payload()).await;
         assert_eq!(result, BeaconResult::Success);
@@ -391,7 +391,7 @@ mod tests {
         rl.expect_check().return_const(false);
 
         let repo = MockTestRepo::new();
-        let svc = StatsService::new(repo, Box::new(rl), 200);
+        let svc = StatsService::new(repo, &rl, 200);
 
         let result = svc.get_stats().await;
         assert_eq!(result, Err(BeaconResult::RateLimited));
@@ -417,7 +417,7 @@ mod tests {
             }])
         });
 
-        let svc = StatsService::new(repo, Box::new(rl), 200);
+        let svc = StatsService::new(repo, &rl, 200);
         let result = svc.get_stats().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().stats.len(), 1);
@@ -438,7 +438,7 @@ mod tests {
             })
         });
 
-        let svc = StatsService::new(repo, Box::new(rl), 200);
+        let svc = StatsService::new(repo, &rl, 200);
         let result = svc.get_summary().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().total_instances, 42);
@@ -452,7 +452,7 @@ mod tests {
         let mut repo = MockTestRepo::new();
         repo.expect_get_total_instances().returning(|| Ok(99));
 
-        let svc = StatsService::new(repo, Box::new(rl), 200);
+        let svc = StatsService::new(repo, &rl, 200);
         let result = svc.get_shield().await;
         assert!(result.is_ok());
         let shield = result.unwrap();
@@ -469,7 +469,7 @@ mod tests {
         repo.expect_get_daily_stats()
             .returning(|| Err(RepositoryError::DatabaseError("fail".to_string())));
 
-        let svc = StatsService::new(repo, Box::new(rl), 200);
+        let svc = StatsService::new(repo, &rl, 200);
         let result = svc.get_stats().await;
         assert_eq!(result, Err(BeaconResult::InternalError));
     }

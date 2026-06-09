@@ -24,10 +24,9 @@ mod config;
 mod domain;
 mod infrastructure;
 
+use crate::adapters::d1_repository::D1Repository;
 use crate::adapters::worker_auth::WorkerAuthProvider;
 use crate::config::*;
-use crate::domain::ports::AuthProvider;
-use crate::domain::RateLimiter;
 use crate::domain::*;
 use worker::*;
 
@@ -64,6 +63,21 @@ fn error_response(status: u16, msg: &'static str, cors: &Cors) -> Result<Respons
     Response::from_json(&ErrorResponse { error: msg })?.with_status(status).with_cors(cors)
 }
 
+/// Map a BeaconResult to an HTTP response with CORS headers.
+fn beacon_result_to_response(result: BeaconResult, cors: &Cors) -> Result<Response> {
+    match result {
+        BeaconResult::Success => {
+            Response::from_json(&serde_json::json!({"status": "ok"}))?.with_cors(cors)
+        }
+        BeaconResult::RateLimited => error_response(429, "rate limit exceeded", cors),
+        BeaconResult::Unauthorized => error_response(401, "unauthorized", cors),
+        BeaconResult::InvalidContentType => error_response(415, "unsupported media type", cors),
+        BeaconResult::PayloadTooLarge => error_response(413, "payload too large", cors),
+        BeaconResult::InvalidPayload => error_response(400, "invalid payload", cors),
+        BeaconResult::InternalError => error_response(500, "internal server error", cors),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
@@ -72,16 +86,9 @@ fn error_response(status: u16, msg: &'static str, cors: &Cors) -> Result<Respons
 async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
 
-    // Rate limit check (before auth to prevent auth-targeted flooding)
-    if !BEACON_RATE_LIMITER.check(BEACON_MAX_PER_WINDOW) {
-        worker::console_error!("rate limit exceeded on beacon endpoint");
-        return error_response(429, "rate limit exceeded", &cors);
-    }
-
     // Content-Type validation — must be application/json
     let content_type = req.headers().get("Content-Type")?.unwrap_or_default();
     if !content_type.to_lowercase().starts_with("application/json") {
-        worker::console_error!("beacon rejected: invalid Content-Type");
         return error_response(415, "unsupported media type", &cors);
     }
 
@@ -89,152 +96,84 @@ async fn handle_beacon(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
     let content_length: usize =
         req.headers().get("Content-Length")?.unwrap_or_default().parse().unwrap_or(0);
     if content_length > MAX_BEACON_BODY_BYTES {
-        worker::console_error!("beacon rejected: body exceeds 10KB limit");
         return error_response(413, "payload too large", &cors);
-    }
-
-    // Auth check
-    let auth_provider = WorkerAuthProvider::new(&ctx);
-    let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
-    if auth_provider.validate_auth(&auth_header).is_err() {
-        worker::console_error!("auth failed: missing or invalid Authorization header");
-        return error_response(401, "unauthorized", &cors);
     }
 
     // Parse payload
     let payload: BeaconPayload = match req.json().await {
         Ok(p) => p,
         Err(_) => {
-            worker::console_error!("beacon rejected: payload parse failed");
             return error_response(400, "invalid payload", &cors);
         }
     };
 
-    if validate_payload(&payload).is_err() {
-        worker::console_error!("beacon rejected: payload validation failed");
-        return error_response(400, "invalid payload", &cors);
-    }
+    // Auth check
+    let auth_provider = WorkerAuthProvider::new(&ctx);
+    let auth_header = req.headers().get("Authorization")?.unwrap_or_default();
 
-    let db = match ctx.d1("DB") {
-        Ok(database) => database,
-        Err(_) => {
-            worker::console_error!("database connection failed");
-            return error_response(500, "internal server error", &cors);
-        }
-    };
+    let db = ctx.d1("DB")?;
+    let repo = D1Repository::new(db);
 
-    let models_json =
-        serde_json::to_string(&payload.stats.models_used).unwrap_or_else(|_| "{}".to_string());
-    let client_types_json =
-        serde_json::to_string(&payload.stats.client_types).unwrap_or_else(|_| "{}".to_string());
-
-    // Upsert beacon row
-    let upsert_stmt = worker::query!(
-        &db,
-        "INSERT OR REPLACE INTO beacons \
-         (instance_id, version, date, total_requests, unique_fingerprints, \
-          models_used, client_types, avg_message_count, tool_use_ratio) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        &payload.instance_id,
-        &payload.version,
-        &payload.date,
-        &payload.stats.total_requests,
-        &payload.stats.unique_fingerprints,
-        &models_json,
-        &client_types_json,
-        &payload.stats.avg_message_count,
-        &payload.stats.tool_use_ratio,
-    )?;
-    upsert_stmt.run().await?;
-
-    Response::from_json(&serde_json::json!({"status": "ok"}))?.with_cors(&cors)
+    let service = BeaconService::new(
+        repo,
+        auth_provider,
+        &BEACON_RATE_LIMITER,
+        BEACON_MAX_PER_WINDOW,
+        MAX_BEACON_BODY_BYTES,
+    );
+    let result =
+        service.receive_beacon(&content_type, content_length, &auth_header, &payload).await;
+    beacon_result_to_response(result, &cors)
 }
 
-/// `GET /v1/stats` — return detailed stats for the last 30 days.
 async fn handle_stats(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
-        worker::console_error!("rate limit exceeded on stats endpoint");
-        return error_response(429, "rate limit exceeded", &cors);
-    }
+
     let db = match ctx.d1("DB") {
         Ok(database) => database,
         Err(_) => return error_response(500, "internal server error", &cors),
     };
 
-    let stmt = worker::query!(
-        &db,
-        "SELECT date, total_instances, total_requests, total_unique_users, \
-         models_used, client_types, avg_message_count, tool_use_ratio, versions \
-         FROM daily_global_stats \
-         ORDER BY date DESC \
-         LIMIT 30",
-    )?;
-    let result = stmt.all().await?;
-    let stats: Vec<DailyGlobalStats> = result.results()?;
+    let repo = D1Repository::new(db);
+    let service = StatsService::new(repo, &STATS_RATE_LIMITER, STATS_MAX_PER_WINDOW);
 
-    Response::from_json(&StatsResponse { stats })?.with_cors(&cors)
+    match service.get_stats().await {
+        Ok(response) => Response::from_json(&response)?.with_cors(&cors),
+        Err(BeaconResult::RateLimited) => error_response(429, "rate limit exceeded", &cors),
+        Err(_) => error_response(500, "internal server error", &cors),
+    }
 }
 
 /// `GET /v1/stats/summary` — lightweight aggregated numbers.
 async fn handle_summary(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
-        worker::console_error!("rate limit exceeded on stats endpoint");
-        return error_response(429, "rate limit exceeded", &cors);
-    }
     let db = match ctx.d1("DB") {
         Ok(database) => database,
         Err(_) => return error_response(500, "internal server error", &cors),
     };
-
-    let stmt = worker::query!(
-        &db,
-        "SELECT \
-             COALESCE(SUM(total_instances), 0) as total_instances, \
-             COALESCE(SUM(total_requests), 0) as total_requests, \
-             COALESCE(SUM(total_unique_users), 0) as total_unique_users, \
-             COUNT(*) as days_active \
-         FROM daily_global_stats",
-    )?;
-    let summary: SummaryResponse = stmt.first(None).await?.unwrap_or(SummaryResponse {
-        total_instances: 0,
-        total_requests: 0,
-        total_unique_users: 0,
-        days_active: 0,
-    });
-
-    Response::from_json(&summary)?.with_cors(&cors)
+    let repo = D1Repository::new(db);
+    let service = StatsService::new(repo, &STATS_RATE_LIMITER, STATS_MAX_PER_WINDOW);
+    match service.get_summary().await {
+        Ok(response) => Response::from_json(&response)?.with_cors(&cors),
+        Err(BeaconResult::RateLimited) => error_response(429, "rate limit exceeded", &cors),
+        Err(_) => error_response(500, "internal server error", &cors),
+    }
 }
 
 /// `GET /v1/stats/shield` — Shields.io compatible badge data.
 async fn handle_shield(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let cors = cors_config(&ctx);
-    if !STATS_RATE_LIMITER.check(STATS_MAX_PER_WINDOW) {
-        worker::console_error!("rate limit exceeded on stats endpoint");
-        return error_response(429, "rate limit exceeded", &cors);
-    }
     let db = match ctx.d1("DB") {
         Ok(database) => database,
         Err(_) => return error_response(500, "internal server error", &cors),
     };
-
-    let stmt = worker::query!(
-        &db,
-        "SELECT COALESCE(SUM(total_instances), 0) as total_instances FROM daily_global_stats",
-    )?;
-    let row: serde_json::Value = stmt.first(None).await?.unwrap_or_default();
-    let total = row.get("total_instances").and_then(|v| v.as_i64()).unwrap_or(0);
-
-    let shield = ShieldResponse {
-        schema_version: 1,
-        label: "NEXUS",
-        message: format!("{} active", total),
-        color: "blue",
-        named_logo: "cloudflare",
-    };
-
-    Response::from_json(&shield)?.with_cors(&cors)
+    let repo = D1Repository::new(db);
+    let service = StatsService::new(repo, &STATS_RATE_LIMITER, STATS_MAX_PER_WINDOW);
+    match service.get_shield().await {
+        Ok(response) => Response::from_json(&response)?.with_cors(&cors),
+        Err(BeaconResult::RateLimited) => error_response(429, "rate limit exceeded", &cors),
+        Err(_) => error_response(500, "internal server error", &cors),
+    }
 }
 
 /// `OPTIONS /*` — CORS preflight.

@@ -15,8 +15,11 @@ pub mod validation;
 
 pub use self::aggregation::merge_json_objects;
 pub use self::aggregation::merge_versions;
-pub use self::rate_limit::{RateLimiter, BEACON_RATE_LIMITER, STATS_RATE_LIMITER};
-#[allow(unused_imports)] // Services used by handlers in Phase 14
+#[allow(unused_imports)] // RateLimiter used via dyn trait in services
+pub use self::rate_limit::RateLimiter;
+pub use self::rate_limit::{BEACON_RATE_LIMITER, STATS_RATE_LIMITER};
+#[allow(unused_imports)] // AggregationService used by scheduled handler in Phase 16
 pub use self::services::{AggregationService, BeaconService, StatsService};
 pub use self::types::*;
+#[allow(unused_imports)] // validate_payload used internally by services
 pub use self::validation::validate_payload;

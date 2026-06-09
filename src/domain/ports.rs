@@ -4,7 +4,7 @@ use crate::domain::types::*;
 
 /// Repository port for beacon data persistence.
 /// Implementations handle D1/SQLite storage details.
-#[allow(dead_code)]
+#[allow(dead_code)] // Aggregation methods used by scheduled handler in Phase 16
 pub trait BeaconRepository: Send + Sync {
     async fn upsert_beacon(&self, payload: &BeaconPayload) -> Result<(), RepositoryError>;
     async fn get_daily_stats(&self) -> Result<Vec<DailyGlobalStats>, RepositoryError>;
@@ -20,13 +20,11 @@ pub trait BeaconRepository: Send + Sync {
 }
 
 /// Authentication port for bearer token validation.
-#[allow(dead_code)]
 pub trait AuthProvider: Send + Sync {
     fn validate_auth(&self, auth_header: &str) -> Result<(), AuthError>;
 }
 
 /// CORS port for Cross-Origin Resource Sharing configuration.
-#[allow(dead_code)]
 pub trait CorsProvider: Send + Sync {
     fn origins(&self) -> Vec<String>;
     fn methods(&self) -> Vec<String>;

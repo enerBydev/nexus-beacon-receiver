@@ -10,25 +10,41 @@ pub struct D1Repository {
 }
 
 impl D1Repository {
-    #[allow(dead_code)]
     pub fn new(db: D1Database) -> Self {
         Self { db }
     }
 }
 
 impl BeaconRepository for D1Repository {
-    async fn upsert_beacon(&self, _payload: &BeaconPayload) -> Result<(), RepositoryError> {
-        // Stub implementation as per task instructions - the actual D1 queries are still in lib.rs
-        // and will be moved in Phase 14. The D1Repository is being created as the adapter,
-        // but the actual migration of calls from lib.rs to D1Repository happens in Phase 13-14.
+    async fn upsert_beacon(&self, payload: &BeaconPayload) -> Result<(), RepositoryError> {
+        let models_json =
+            serde_json::to_string(&payload.stats.models_used).unwrap_or_else(|_| "{}".to_string());
+        let client_types_json =
+            serde_json::to_string(&payload.stats.client_types).unwrap_or_else(|_| "{}".to_string());
+
+        let stmt = worker::query!(
+            &self.db,
+            SQL_UPSERT_BEACON,
+            &payload.instance_id,
+            &payload.version,
+            &payload.date,
+            &payload.stats.total_requests,
+            &payload.stats.unique_fingerprints,
+            &models_json,
+            &client_types_json,
+            &payload.stats.avg_message_count,
+            &payload.stats.tool_use_ratio,
+        );
+        stmt.map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+            .run()
+            .await
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
     async fn get_daily_stats(&self) -> Result<Vec<DailyGlobalStats>, RepositoryError> {
-        let result = self
-            .db
-            .prepare(SQL_GET_DAILY_STATS)
-            .run()
+        let result = worker::query!(&self.db, SQL_GET_DAILY_STATS)
+            .all()
             .await
             .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
         let stats: Vec<DailyGlobalStats> =
@@ -37,49 +53,32 @@ impl BeaconRepository for D1Repository {
     }
 
     async fn get_summary(&self) -> Result<SummaryResponse, RepositoryError> {
-        let result = self
-            .db
-            .prepare(SQL_GET_SUMMARY)
-            .run()
+        let result = worker::query!(&self.db, SQL_GET_SUMMARY)
+            .first(None)
             .await
-            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
-        let summary_results = result
-            .results::<SummaryResponse>()
-            .map_err(|e| RepositoryError::DeserializationError(e.to_string()))?;
-        let summary: SummaryResponse = match summary_results.first() {
-            Some(first_summary) => first_summary.clone(),
-            None => SummaryResponse {
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+            .unwrap_or(SummaryResponse {
                 total_instances: 0,
                 total_requests: 0,
                 total_unique_users: 0,
                 days_active: 0,
-            },
-        };
-        Ok(summary)
+            });
+        Ok(result)
     }
 
     async fn get_total_instances(&self) -> Result<i64, RepositoryError> {
-        let result = self
-            .db
-            .prepare(SQL_GET_TOTAL_INSTANCES)
-            .run()
+        let result: serde_json::Value = worker::query!(&self.db, SQL_GET_TOTAL_INSTANCES)
+            .first(None)
             .await
-            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
-        let rows = result
-            .results::<serde_json::Value>()
-            .map_err(|e| RepositoryError::DeserializationError(e.to_string()))?;
-        let total = match rows.first() {
-            Some(row) => row.get("total_instances").and_then(|v| v.as_i64()).unwrap_or(0),
-            None => 0,
-        };
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+            .unwrap_or_default();
+        let total = result.get("total_instances").and_then(|v| v.as_i64()).unwrap_or(0);
         Ok(total)
     }
 
     async fn get_dates_needing_aggregation(&self) -> Result<Vec<String>, RepositoryError> {
-        let result = self
-            .db
-            .prepare(SQL_GET_DATES_FOR_AGGREGATION)
-            .run()
+        let result = worker::query!(&self.db, SQL_GET_DATES_FOR_AGGREGATION)
+            .all()
             .await
             .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
         let rows: Vec<serde_json::Value> =
