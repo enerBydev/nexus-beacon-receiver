@@ -149,14 +149,12 @@ impl<'a, R: BeaconRepository> StatsService<'a, R> {
 /// Service for scheduled data aggregation and cleanup.
 ///
 /// Orchestrates: find dates needing aggregation → aggregate each → cleanup old data.
-#[allow(dead_code)] // Used by scheduled handler in Phase 16
 pub struct AggregationService<R: BeaconRepository> {
     repo: R,
     beacon_retention_days: i64,
     stats_retention_days: i64,
 }
 
-#[allow(dead_code)] // Used by scheduled handler in Phase 16
 impl<R: BeaconRepository> AggregationService<R> {
     /// Create a new AggregationService with the given retention periods.
     pub fn new(repo: R, beacon_retention_days: i64, stats_retention_days: i64) -> Self {

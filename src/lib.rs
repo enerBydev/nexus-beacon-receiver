@@ -24,9 +24,10 @@ mod config;
 mod domain;
 mod infrastructure;
 
+use crate::adapters::d1_repository::D1Repository;
 use crate::adapters::handlers::*;
 use crate::config::*;
-use crate::domain::*;
+use crate::domain::AggregationService;
 use worker::*;
 
 // ---------------------------------------------------------------------------
@@ -46,108 +47,20 @@ async fn cron(
     _ctx: worker::ScheduleContext,
 ) -> worker::Result<()> {
     let db = env.d1("DB")?;
+    let repo = D1Repository::new(db);
+    let service = AggregationService::new(repo, BEACON_RETENTION_DAYS, STATS_RETENTION_DAYS);
 
-    // 1. Find dates that need aggregation (today and yesterday)
-    let dates_stmt = worker::query!(
-        &db,
-        "SELECT DISTINCT date FROM beacons \
-         WHERE date >= DATE('now', '-1 day') \
-         ORDER BY date DESC"
-    );
-    let dates_result = dates_stmt.all().await?;
-
-    // 2. For each date, recalculate daily_global_stats
-    for date_row in dates_result.results::<serde_json::Value>()? {
-        if let Some(date) = date_row.get("date").and_then(|v| v.as_str()) {
-            if let Err(e) = aggregate_for_date(&db, date).await {
-                worker::console_error!("aggregate_for_date({}) failed: {}", date, e);
-            }
-        }
+    // Run aggregation for all dates needing it
+    if let Err(e) = service.run_aggregation().await {
+        worker::console_error!("run_aggregation failed: {}", e);
     }
 
-    // 3. Cleanup old data (daily 3am cron only)
+    // Cleanup old data (daily 3am cron only)
     if event.cron() == "0 3 * * *" {
-        if let Err(e) = cleanup_old_data(&db).await {
-            worker::console_error!("cleanup_old_data failed: {}", e);
+        if let Err(e) = service.run_cleanup().await {
+            worker::console_error!("cleanup failed: {}", e);
         }
     }
-
-    Ok(())
-}
-
-/// Aggregate all beacons for a given date into daily_global_stats.
-async fn aggregate_for_date(db: &worker::D1Database, date: &str) -> worker::Result<()> {
-    // Merge JSON fields in Rust (D1/SQLite lacks native JSON merge)
-    let merge_rows = worker::query!(
-        &db,
-        "SELECT models_used, client_types, version FROM beacons WHERE date = ?1",
-        date,
-    )?;
-    let merge_result = merge_rows.all().await?;
-    let rows: Vec<BeaconRow> = merge_result.results()?;
-
-    let models_json =
-        merge_json_objects(&rows.iter().map(|r| r.models_used.clone()).collect::<Vec<_>>());
-    let ct_json =
-        merge_json_objects(&rows.iter().map(|r| r.client_types.clone()).collect::<Vec<_>>());
-    let ver_json = merge_versions(&rows.iter().map(|r| r.version.clone()).collect::<Vec<_>>());
-
-    // SQL aggregation
-    let count_stmt = worker::query!(
-        &db,
-        "SELECT COUNT(DISTINCT instance_id) as total_instances, \
-         SUM(total_requests) as total_requests, \
-         SUM(unique_fingerprints) as total_unique_users, \
-         AVG(avg_message_count) as avg_message_count, \
-         AVG(tool_use_ratio) as tool_use_ratio \
-         FROM beacons WHERE date = ?1",
-        date,
-    )?;
-    let agg: AggregationResult = count_stmt.first(None).await?.unwrap_or(AggregationResult {
-        total_instances: 0,
-        total_requests: 0,
-        total_unique_users: 0,
-        avg_message_count: 0.0,
-        tool_use_ratio: 0.0,
-    });
-
-    // Upsert global stats
-    let recalc_stmt = worker::query!(
-        &db,
-        "INSERT OR REPLACE INTO daily_global_stats \
-         (date, total_instances, total_requests, total_unique_users, \
-         models_used, client_types, avg_message_count, tool_use_ratio, versions, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, DATETIME('now'))",
-        date,
-        agg.total_instances,
-        agg.total_requests,
-        agg.total_unique_users,
-        &models_json,
-        &ct_json,
-        agg.avg_message_count,
-        agg.tool_use_ratio,
-        &ver_json,
-    )?;
-    recalc_stmt.run().await?;
-
-    Ok(())
-}
-
-/// Delete old data beyond retention window.
-async fn cleanup_old_data(db: &worker::D1Database) -> worker::Result<()> {
-    let stmt = worker::query!(
-        &db,
-        "DELETE FROM beacons WHERE date < DATE('now', ?1 || ' days')",
-        format!("-{}", BEACON_RETENTION_DAYS),
-    )?;
-    stmt.run().await?;
-
-    let stmt = worker::query!(
-        &db,
-        "DELETE FROM daily_global_stats WHERE date < DATE('now', ?1 || ' days')",
-        format!("-{}", STATS_RETENTION_DAYS),
-    )?;
-    stmt.run().await?;
 
     Ok(())
 }
@@ -173,6 +86,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::merge_versions;
 
     #[test]
     fn it_compiles() {

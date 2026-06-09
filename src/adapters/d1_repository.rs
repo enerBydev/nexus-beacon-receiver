@@ -91,19 +91,85 @@ impl BeaconRepository for D1Repository {
         Ok(dates)
     }
 
-    async fn aggregate_for_date(&self, _date: &str) -> Result<(), RepositoryError> {
-        // Stub implementation as per task instructions - methods that need bind params (aggregate_for_date, cleanup_old_data)
-        // can be stubs for now since the actual D1 queries are still in lib.rs and will be moved in Phase 14
+    async fn aggregate_for_date(&self, date: &str) -> Result<(), RepositoryError> {
+        // Import the aggregation functions we need
+        use crate::domain::aggregation::{merge_json_objects, merge_versions};
+        use crate::domain::types::{AggregationResult, BeaconRow};
+
+        // Get beacons for the date to merge JSON fields
+        let merge_rows = worker::query!(&self.db, SQL_GET_BEACONS_FOR_DATE, date,)
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+            .all()
+            .await
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+
+        let rows: Vec<BeaconRow> = merge_rows
+            .results()
+            .map_err(|e| RepositoryError::DeserializationError(e.to_string()))?;
+
+        let models_json =
+            merge_json_objects(&rows.iter().map(|r| r.models_used.clone()).collect::<Vec<_>>());
+        let ct_json =
+            merge_json_objects(&rows.iter().map(|r| r.client_types.clone()).collect::<Vec<_>>());
+        let ver_json = merge_versions(&rows.iter().map(|r| r.version.clone()).collect::<Vec<_>>());
+
+        // SQL aggregation
+        let count_stmt = worker::query!(&self.db, SQL_AGGREGATE_DATE, date,)
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+
+        let agg: AggregationResult = count_stmt
+            .first(None)
+            .await
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+            .unwrap_or(AggregationResult {
+                total_instances: 0,
+                total_requests: 0,
+                total_unique_users: 0,
+                avg_message_count: 0.0,
+                tool_use_ratio: 0.0,
+            });
+
+        // Upsert global stats
+        let _recalc_stmt = worker::query!(
+            &self.db,
+            SQL_UPSERT_GLOBAL_STATS,
+            date,
+            agg.total_instances,
+            agg.total_requests,
+            agg.total_unique_users,
+            &models_json,
+            &ct_json,
+            agg.avg_message_count,
+            agg.tool_use_ratio,
+            &ver_json,
+        )
+        .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+        .run()
+        .await
+        .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+
         Ok(())
     }
 
     async fn cleanup_old_data(
         &self,
-        _beacon_retention_days: i64,
-        _stats_retention_days: i64,
+        beacon_retention_days: i64,
+        stats_retention_days: i64,
     ) -> Result<(), RepositoryError> {
-        // Stub implementation as per task instructions - methods that need bind params (aggregate_for_date, cleanup_old_data)
-        // can be stubs for now since the actual D1 queries are still in lib.rs and will be moved in Phase 14
+        let _stmt1 =
+            worker::query!(&self.db, SQL_CLEANUP_BEACONS, format!("-{}", beacon_retention_days),)
+                .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+                .run()
+                .await
+                .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+
+        let _stmt2 =
+            worker::query!(&self.db, SQL_CLEANUP_STATS, format!("-{}", stats_retention_days),)
+                .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?
+                .run()
+                .await
+                .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+
         Ok(())
     }
 }

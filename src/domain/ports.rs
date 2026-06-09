@@ -4,7 +4,6 @@ use crate::domain::types::*;
 
 /// Repository port for beacon data persistence.
 /// Implementations handle D1/SQLite storage details.
-#[allow(dead_code)] // Aggregation methods used by scheduled handler in Phase 16
 pub trait BeaconRepository: Send + Sync {
     async fn upsert_beacon(&self, payload: &BeaconPayload) -> Result<(), RepositoryError>;
     async fn get_daily_stats(&self) -> Result<Vec<DailyGlobalStats>, RepositoryError>;
