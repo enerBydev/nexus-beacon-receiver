@@ -25,7 +25,6 @@ mod domain;
 mod infrastructure;
 
 use crate::adapters::d1_repository::D1Repository;
-use crate::adapters::handlers::*;
 use crate::config::*;
 use crate::domain::AggregationService;
 use worker::*;
@@ -70,14 +69,7 @@ async fn cron(
 
 #[event(fetch)]
 async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    Router::new()
-        .post_async("/v1/beacon", handle_beacon)
-        .get_async("/v1/stats", handle_stats)
-        .get_async("/v1/stats/summary", handle_summary)
-        .get_async("/v1/stats/shield", handle_shield)
-        .options("/*route", handle_options)
-        .run(req, env)
-        .await
+    crate::infrastructure::router::configure_router().run(req, env).await
 }
 
 // ---------------------------------------------------------------------------
