@@ -221,19 +221,7 @@ mod tests {
 
     /// Helper: valid BeaconPayload for tests.
     fn valid_payload() -> BeaconPayload {
-        BeaconPayload {
-            instance_id: "a".repeat(64),
-            version: "0.19.0".to_string(),
-            date: "2026-06-08".to_string(),
-            stats: crate::domain::types::BeaconStats {
-                total_requests: 100,
-                unique_fingerprints: 10,
-                models_used: serde_json::Map::new(),
-                client_types: serde_json::Map::new(),
-                avg_message_count: 5.0,
-                tool_use_ratio: 0.5,
-            },
-        }
+        crate::domain::types::builders::BeaconPayloadBuilder::default().build()
     }
 
     // ---- BeaconService tests ----
@@ -307,19 +295,9 @@ mod tests {
 
         let svc = BeaconService::new(repo, auth, &rl, 100, 10_240);
         // Empty instance_id is invalid
-        let bad_payload = BeaconPayload {
-            instance_id: String::new(),
-            version: "0.19.0".to_string(),
-            date: "2026-06-08".to_string(),
-            stats: crate::domain::types::BeaconStats {
-                total_requests: 100,
-                unique_fingerprints: 10,
-                models_used: serde_json::Map::new(),
-                client_types: serde_json::Map::new(),
-                avg_message_count: 5.0,
-                tool_use_ratio: 0.5,
-            },
-        };
+        let bad_payload = crate::domain::types::builders::BeaconPayloadBuilder::default()
+            .instance_id(String::new())
+            .build();
         let result =
             svc.receive_beacon("application/json", 100, "Bearer token", &bad_payload).await;
         assert_eq!(result, BeaconResult::InvalidPayload);

@@ -23,3 +23,4 @@ lto = true
 proptest = "1"
 mockall = "0.13"
 tokio = { version = "1", features = ["rt", "macros"] }
+fake = "3"

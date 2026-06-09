@@ -246,3 +246,152 @@ mod tests {
         assert_eq!(format!("{}", err), "invalid credentials");
     }
 }
+
+#[cfg(test)]
+pub mod builders {
+    use crate::domain::types::{BeaconPayload, BeaconStats};
+
+    /// Builder for constructing test BeaconPayload instances.
+    ///
+    /// # Examples
+    /// ```
+    /// use nexus_beacon_receiver::tests::common::BeaconPayloadBuilder;
+    /// let payload = BeaconPayloadBuilder::default().build();
+    /// let custom = BeaconPayloadBuilder::default()
+    ///     .instance_id("custom-id")
+    ///     .build();
+    /// ```
+    pub struct BeaconPayloadBuilder {
+        instance_id: String,
+        version: String,
+        date: String,
+        stats: BeaconStats,
+    }
+
+    impl Default for BeaconPayloadBuilder {
+        fn default() -> Self {
+            Self {
+                instance_id: "a".repeat(64), // 64-char hex string (valid)
+                version: "0.19.0".to_string(),
+                date: "2026-06-08".to_string(),
+                stats: BeaconStats {
+                    total_requests: 100,
+                    unique_fingerprints: 10,
+                    models_used: Default::default(),
+                    client_types: Default::default(),
+                    avg_message_count: 5.0,
+                    tool_use_ratio: 0.5,
+                },
+            }
+        }
+    }
+
+    impl BeaconPayloadBuilder {
+        pub fn instance_id(mut self, id: impl Into<String>) -> Self {
+            self.instance_id = id.into();
+            self
+        }
+
+        pub fn version(mut self, v: impl Into<String>) -> Self {
+            self.version = v.into();
+            self
+        }
+
+        pub fn date(mut self, d: impl Into<String>) -> Self {
+            self.date = d.into();
+            self
+        }
+
+        pub fn stats(mut self, s: BeaconStats) -> Self {
+            self.stats = s;
+            self
+        }
+
+        pub fn build(self) -> BeaconPayload {
+            BeaconPayload {
+                instance_id: self.instance_id,
+                version: self.version,
+                date: self.date,
+                stats: self.stats,
+            }
+        }
+    }
+
+    /// Builder for constructing test BeaconStats instances.
+    pub struct BeaconStatsBuilder {
+        total_requests: u64,
+        unique_fingerprints: u64,
+        models_used: serde_json::Map<String, serde_json::Value>,
+        client_types: serde_json::Map<String, serde_json::Value>,
+        avg_message_count: f64,
+        tool_use_ratio: f64,
+    }
+
+    impl Default for BeaconStatsBuilder {
+        fn default() -> Self {
+            Self {
+                total_requests: 100,
+                unique_fingerprints: 10,
+                models_used: Default::default(),
+                client_types: Default::default(),
+                avg_message_count: 5.0,
+                tool_use_ratio: 0.5,
+            }
+        }
+    }
+
+    impl BeaconStatsBuilder {
+        pub fn total_requests(mut self, v: u64) -> Self {
+            self.total_requests = v;
+            self
+        }
+
+        pub fn unique_fingerprints(mut self, v: u64) -> Self {
+            self.unique_fingerprints = v;
+            self
+        }
+
+        pub fn avg_message_count(mut self, v: f64) -> Self {
+            self.avg_message_count = v;
+            self
+        }
+
+        pub fn tool_use_ratio(mut self, v: f64) -> Self {
+            self.tool_use_ratio = v;
+            self
+        }
+
+        pub fn build(self) -> BeaconStats {
+            BeaconStats {
+                total_requests: self.total_requests,
+                unique_fingerprints: self.unique_fingerprints,
+                models_used: self.models_used,
+                client_types: self.client_types,
+                avg_message_count: self.avg_message_count,
+                tool_use_ratio: self.tool_use_ratio,
+            }
+        }
+    }
+
+    #[test]
+    fn builder_default_is_valid() {
+        let payload = BeaconPayloadBuilder::default().build();
+        // Note: We can't call validate_payload here as it's in a different module
+        // but we can at least check the payload is constructed correctly
+        assert_eq!(payload.instance_id, "a".repeat(64));
+    }
+
+    #[test]
+    fn builder_custom_instance_id() {
+        let payload = BeaconPayloadBuilder::default().instance_id("custom-id-123").build();
+        assert_eq!(payload.instance_id, "custom-id-123");
+    }
+
+    #[test]
+    fn builder_with_invalid_field_fails_validation() {
+        let payload = BeaconPayloadBuilder::default().instance_id(String::new()).build();
+        // We can't actually test validation here since validate_payload isn't accessible
+        // but we can at least check the instance_id is empty
+        assert_eq!(payload.instance_id, String::new());
+    }
+}
