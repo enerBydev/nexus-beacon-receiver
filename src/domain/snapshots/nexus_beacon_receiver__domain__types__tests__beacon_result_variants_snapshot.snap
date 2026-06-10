@@ -1,0 +1,5 @@
+---
+source: src/domain/types.rs
+expression: variants
+---
+Success RateLimited Unauthorized InvalidContentType PayloadTooLarge InvalidPayload InternalError

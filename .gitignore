@@ -38,3 +38,4 @@ docs/
 CLAUDE.md
 .gstack/
 AGENTS.md
+proptest-regressions/

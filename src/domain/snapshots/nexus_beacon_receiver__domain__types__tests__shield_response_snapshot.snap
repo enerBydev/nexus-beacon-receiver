@@ -1,0 +1,11 @@
+---
+source: src/domain/types.rs
+expression: response
+---
+{
+  "schemaVersion": 1,
+  "label": "NEXUS",
+  "message": "10 active",
+  "color": "blue",
+  "namedLogo": "cloudflare"
+}

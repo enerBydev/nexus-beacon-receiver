@@ -1,0 +1,19 @@
+---
+source: src/domain/types.rs
+expression: response
+---
+{
+  "stats": [
+    {
+      "date": "2026-06-08",
+      "total_instances": 5,
+      "total_requests": 500,
+      "total_unique_users": 3,
+      "models_used": "{\"claude-sonnet-4-6\":3,\"claude-opus-4-5\":2}",
+      "client_types": "{\"claude-code\":4,\"api\":1}",
+      "avg_message_count": 4.0,
+      "tool_use_ratio": 0.3,
+      "versions": "{\"0.19.0\":3,\"0.18.2\":2}"
+    }
+  ]
+}
