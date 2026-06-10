@@ -17,8 +17,12 @@ use crate::domain::validation::validate_payload;
 
 /// Service for receiving beacon telemetry from NEXUS-AI-Gateway instances.
 ///
-/// Orchestrates: rate limit → content-type → body-size → auth → validate → repo upsert.
-/// Returns a [`BeaconResult`] variant that the handler maps to an HTTP response.
+/// # Example
+/// ```rust,ignore
+/// // BeaconService orchestrates: rate limit → content-type → body-size → auth → validate → repo upsert
+/// // Requires a BeaconRepository and AuthProvider implementation.
+/// // See domain::services tests for mockall-based usage examples.
+/// ```
 pub struct BeaconService<'a, R: BeaconRepository, A: AuthProvider> {
     repo: R,
     auth: A,
@@ -41,8 +45,11 @@ impl<'a, R: BeaconRepository, A: AuthProvider> BeaconService<'a, R, A> {
 
     /// Receive a beacon payload and process it through the full validation pipeline.
     ///
-    /// The caller (handler) is responsible for parsing the JSON body into a
-    /// [`BeaconPayload`] before calling this method.
+    /// # Example
+    /// ```rust,ignore
+    /// // BeaconService orchestrates: rate limit → content-type → body-size → auth → validate → repo upsert
+    /// // The caller (handler) is responsible for parsing the JSON body into a BeaconPayload before calling this method.
+    /// ```
     pub async fn receive_beacon(
         &self,
         content_type: &str,
@@ -90,7 +97,12 @@ impl<'a, R: BeaconRepository, A: AuthProvider> BeaconService<'a, R, A> {
 
 /// Service for retrieving aggregated statistics.
 ///
-/// All methods check the rate limiter before delegating to the repository.
+/// # Example
+/// ```rust,ignore
+/// // StatsService retrieves aggregated statistics.
+/// // All methods check the rate limiter before delegating to the repository.
+/// // See domain::services tests for mockall-based usage examples.
+/// ```
 pub struct StatsService<'a, R: BeaconRepository> {
     repo: R,
     rate_limiter: &'a dyn RateLimiter,
@@ -104,6 +116,12 @@ impl<'a, R: BeaconRepository> StatsService<'a, R> {
     }
 
     /// Get daily stats for the last 30 days.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // StatsService::get_stats() checks rate limit first before retrieving stats.
+    /// // It returns a Result<StatsResponse, BeaconResult> with either the stats or a BeaconResult error.
+    /// ```
     pub async fn get_stats(&self) -> Result<StatsResponse, BeaconResult> {
         if !self.rate_limiter.check(self.stats_max_per_window) {
             return Err(BeaconResult::RateLimited);
@@ -148,7 +166,11 @@ impl<'a, R: BeaconRepository> StatsService<'a, R> {
 
 /// Service for scheduled data aggregation and cleanup.
 ///
-/// Orchestrates: find dates needing aggregation → aggregate each → cleanup old data.
+/// # Example
+/// ```rust,ignore
+/// // AggregationService orchestrates: find dates needing aggregation → aggregate each → cleanup old data.
+/// // See domain::services tests for mockall-based usage examples.
+/// ```
 pub struct AggregationService<R: BeaconRepository> {
     repo: R,
     beacon_retention_days: i64,
@@ -163,7 +185,11 @@ impl<R: BeaconRepository> AggregationService<R> {
 
     /// Run aggregation for all dates that need it.
     ///
-    /// Returns the first error encountered, or `Ok(())` if all dates aggregated successfully.
+    /// # Example
+    /// ```rust,ignore
+    /// // AggregationService orchestrates: find dates needing aggregation → aggregate each → cleanup old data.
+    /// // It finds dates needing aggregation and aggregates each.
+    /// ```
     pub async fn run_aggregation(&self) -> Result<(), RepositoryError> {
         let dates = self.repo.get_dates_needing_aggregation().await?;
         for date in &dates {
@@ -173,6 +199,12 @@ impl<R: BeaconRepository> AggregationService<R> {
     }
 
     /// Delete old data beyond the retention windows.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // AggregationService::run_cleanup() deletes old data per retention policy.
+    /// // It cleans up old beacon data and statistics based on the retention policy.
+    /// ```
     pub async fn run_cleanup(&self) -> Result<(), RepositoryError> {
         self.repo.cleanup_old_data(self.beacon_retention_days, self.stats_retention_days).await
     }

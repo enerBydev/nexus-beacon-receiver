@@ -5,6 +5,20 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Strategy trait for rate limiting — enables testability with mock time.
 /// This is a pure domain abstraction with no worker dependencies.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // This trait is typically used in implementations like:
+/// //
+/// // struct MyRateLimiter;
+/// //
+/// // impl RateLimiter for MyRateLimiter {
+/// //     fn check(&self, max_per_window: u32) -> bool {
+/// //         // Implementation would go here
+/// //     }
+/// // }
+/// ```
 pub trait RateLimiter: Send + Sync {
     /// Returns true if the request is allowed, false if rate limit exceeded.
     fn check(&self, max_per_window: u32) -> bool;

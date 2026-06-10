@@ -2,6 +2,25 @@
 
 /// Merge multiple JSON objects from beacons into a single aggregated object.
 /// Each numeric value is summed across all objects (supports both integers and floats).
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::aggregation::merge_json_objects;
+/// use serde_json;
+///
+/// let json_strings = vec![
+///     r#"{"a": 10, "b": 5}"#.to_string(),
+///     r#"{"a": 20, "c": 3}"#.to_string(),
+/// ];
+/// let result = merge_json_objects(&json_strings);
+///
+/// // Parse the result to check individual values
+/// let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&result).unwrap();
+/// assert_eq!(parsed.get("a").unwrap().as_i64().unwrap(), 30);
+/// assert_eq!(parsed.get("b").unwrap().as_i64().unwrap(), 5);
+/// assert_eq!(parsed.get("c").unwrap().as_i64().unwrap(), 3);
+/// ```
 pub fn merge_json_objects(json_strings: &[String]) -> String {
     let mut merged: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     for js in json_strings {
@@ -41,6 +60,19 @@ pub fn merge_json_objects(json_strings: &[String]) -> String {
 }
 
 /// Merge version strings from beacons into a `{version: instance_count}` JSON.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::aggregation::merge_versions;
+/// use std::collections::HashMap;
+///
+/// let versions = vec!["0.17.4".to_string(), "0.17.4".to_string(), "0.18.0".to_string()];
+/// let result = merge_versions(&versions);
+/// let parsed: HashMap<String, i64> = serde_json::from_str(&result).unwrap();
+/// assert_eq!(*parsed.get("0.17.4").unwrap(), 2);
+/// assert_eq!(*parsed.get("0.18.0").unwrap(), 1);
+/// ```
 pub fn merge_versions(versions: &[String]) -> String {
     let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for v in versions {

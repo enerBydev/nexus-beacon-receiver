@@ -5,6 +5,21 @@ use crate::domain::types::BeaconPayload;
 
 /// Validate YYYY-MM-DD date format without regex (no regex crate in WASM).
 /// Validates format and range: year (0000-9999), month (01-12), day (01-31)
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::validation::is_valid_date;
+///
+/// // Valid dates
+/// assert_eq!(is_valid_date("2026-06-04"), true);
+/// assert_eq!(is_valid_date("2025-01-31"), true);
+///
+/// // Invalid dates
+/// assert_eq!(is_valid_date("2026/06/04"), false);
+/// assert_eq!(is_valid_date("not-a-date"), false);
+/// assert_eq!(is_valid_date("2026-13-01"), false); // Invalid month
+/// ```
 pub fn is_valid_date(s: &str) -> bool {
     if s.len() != 10 {
         return false;
@@ -31,6 +46,34 @@ pub fn is_valid_date(s: &str) -> bool {
 
 /// Validate beacon payload fields against security constraints.
 /// All error messages are generic to prevent information leakage.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::validation::validate_payload;
+/// use nexus_beacon_receiver::domain::types::{BeaconPayload, BeaconStats};
+/// use serde_json;
+///
+/// let valid_payload = BeaconPayload {
+///     instance_id: "a".repeat(64),
+///     version: "0.19.0".to_string(),
+///     date: "2026-06-04".to_string(),
+///     stats: BeaconStats {
+///         total_requests: 100,
+///         unique_fingerprints: 10,
+///         models_used: serde_json::Map::new(),
+///         client_types: serde_json::Map::new(),
+///         avg_message_count: 5.0,
+///         tool_use_ratio: 0.5,
+///     },
+/// };
+///
+/// assert!(validate_payload(&valid_payload).is_ok());
+///
+/// let mut invalid_payload = valid_payload;
+/// invalid_payload.instance_id = "invalid-id".to_string();
+/// assert!(validate_payload(&invalid_payload).is_err());
+/// ```
 pub fn validate_payload(payload: &BeaconPayload) -> Result<(), &'static str> {
     // Length checks
     if payload.instance_id.is_empty() || payload.instance_id.len() > MAX_INSTANCE_ID_LEN {

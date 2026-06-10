@@ -5,6 +5,19 @@ use crate::domain::types::AuthError;
 /// Constant-time string comparison resistant to timing side-channel attacks.
 /// XORs all bytes and ORs length difference so comparison time is independent
 /// of where strings differ. Does NOT use ring/subtle (won't compile to wasm32).
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::security::constant_time_eq;
+///
+/// // Equal strings
+/// assert_eq!(constant_time_eq("test_secret", "test_secret"), true);
+///
+/// // Different strings
+/// assert_eq!(constant_time_eq("test_secret", "wrong_secret"), false);
+/// assert_eq!(constant_time_eq("short", "much_longer_string"), false);
+/// ```
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
@@ -22,6 +35,22 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
 /// Verify a Bearer token from an Authorization header against the expected secret.
 /// Pure domain function — no worker dependencies.
 /// Returns Ok(()) if valid, Err(AuthError) if invalid.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::security::verify_bearer_token;
+/// use nexus_beacon_receiver::domain::types::AuthError;
+///
+/// // Valid token example
+/// let secret = "test_secret";
+/// let auth_header = "Bearer test_secret";
+/// assert!(verify_bearer_token(auth_header, secret).is_ok());
+///
+/// // Invalid token example
+/// let wrong_auth_header = "Bearer wrong_secret";
+/// assert!(verify_bearer_token(wrong_auth_header, secret).is_err());
+/// ```
 pub fn verify_bearer_token(auth_header: &str, secret: &str) -> Result<(), AuthError> {
     let token = extract_bearer_token(auth_header);
     let mut expected = secret.to_string();
@@ -38,6 +67,24 @@ pub fn verify_bearer_token(auth_header: &str, secret: &str) -> Result<(), AuthEr
 
 /// Case-insensitive "Bearer " prefix extraction from Authorization header.
 /// Per RFC 7235, the auth-scheme token is case-insensitive.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::security::extract_bearer_token;
+///
+/// // Standard Bearer token
+/// assert_eq!(extract_bearer_token("Bearer abc123"), "abc123");
+///
+/// // Lowercase bearer
+/// assert_eq!(extract_bearer_token("bearer abc123"), "abc123");
+///
+/// // Mixed case bearer
+/// assert_eq!(extract_bearer_token("BEARER abc123"), "abc123");
+///
+/// // No prefix (returns the whole string)
+/// assert_eq!(extract_bearer_token("abc123"), "abc123");
+/// ```
 pub fn extract_bearer_token(header: &str) -> &str {
     if header.len() >= 7 {
         let prefix = &header[..7];
@@ -51,6 +98,16 @@ pub fn extract_bearer_token(header: &str) -> &str {
 /// Overwrite a String's heap memory with zeroes to prevent credential leakage
 /// after comparison. Uses volatile writes to prevent compiler optimization from
 /// eliding the zeroing. The String is then cleared to length 0.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::security::zeroize_string;
+///
+/// let mut secret = "sensitive_data".to_string();
+/// zeroize_string(&mut secret);
+/// assert_eq!(secret.len(), 0);
+/// ```
 pub fn zeroize_string(s: &mut String) {
     let bytes = unsafe { s.as_bytes_mut() };
     for byte in bytes.iter_mut() {

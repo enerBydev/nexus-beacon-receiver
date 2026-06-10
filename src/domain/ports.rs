@@ -3,7 +3,14 @@
 use crate::domain::types::*;
 
 /// Repository port for beacon data persistence.
-/// Implementations handle D1/SQLite storage details.
+///
+/// # Example
+/// ```rust,ignore
+/// // BeaconRepository is a port trait implemented by D1Repository for production
+/// // and InMemoryRepository for testing. See `adapters::d1_repository::D1Repository`
+/// // for a concrete implementation.
+/// ```
+#[allow(async_fn_in_trait)]
 pub trait BeaconRepository: Send + Sync {
     async fn upsert_beacon(&self, payload: &BeaconPayload) -> Result<(), RepositoryError>;
     async fn get_daily_stats(&self) -> Result<Vec<DailyGlobalStats>, RepositoryError>;
@@ -19,11 +26,23 @@ pub trait BeaconRepository: Send + Sync {
 }
 
 /// Authentication port for bearer token validation.
+///
+/// # Example
+/// ```rust,ignore
+/// // AuthProvider is a port trait for bearer token validation.
+/// // Implementations handle the authentication logic for the beacon receiver.
+/// ```
 pub trait AuthProvider: Send + Sync {
     fn validate_auth(&self, auth_header: &str) -> Result<(), AuthError>;
 }
 
 /// CORS port for Cross-Origin Resource Sharing configuration.
+///
+/// # Example
+/// ```rust,ignore
+/// // CorsProvider is a port trait for CORS configuration.
+/// // It defines the Cross-Origin Resource Sharing configuration for the beacon receiver.
+/// ```
 pub trait CorsProvider: Send + Sync {
     fn origins(&self) -> Vec<String>;
     fn methods(&self) -> Vec<String>;

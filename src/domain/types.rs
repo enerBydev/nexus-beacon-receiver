@@ -4,6 +4,15 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 /// Incoming beacon payload from a NEXUS-AI-Gateway instance.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::BeaconPayload;
+///
+/// let json = r#"{"instance_id":"abc123","version":"0.19.0","date":"2026-06-04","stats":{"total_requests":100,"unique_fingerprints":10,"models_used":{},"client_types":{},"avg_message_count":5.0,"tool_use_ratio":0.5}}"#;
+/// let payload: BeaconPayload = serde_json::from_str(json).unwrap();
+/// assert_eq!(payload.instance_id, "abc123");
+/// ```
 #[derive(Deserialize, Serialize, Clone)]
 pub struct BeaconPayload {
     pub instance_id: String,
@@ -13,6 +22,16 @@ pub struct BeaconPayload {
 }
 
 /// Per-instance daily statistics inside the beacon payload.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::BeaconStats;
+/// use serde_json;
+///
+/// let json = r#"{"total_requests":100,"unique_fingerprints":10,"models_used":{},"client_types":{},"avg_message_count":5.0,"tool_use_ratio":0.5}"#;
+/// let stats: BeaconStats = serde_json::from_str(json).unwrap();
+/// assert_eq!(stats.total_requests, 100);
+/// ```
 #[derive(Deserialize, Serialize, Clone)]
 pub struct BeaconStats {
     pub total_requests: u64,
@@ -26,6 +45,13 @@ pub struct BeaconStats {
 }
 
 /// Row from the `beacons` table used for JSON merge aggregation.
+///
+/// # Example
+/// ```rust,ignore
+/// // BeaconRow is a struct that derives only Deserialize, so it cannot be directly constructed in a doc-test.
+/// // It represents a row from the `beacons` table used for JSON merge aggregation.
+/// // For internal use in the aggregation process.
+/// ```
 #[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct BeaconRow {
@@ -35,6 +61,13 @@ pub struct BeaconRow {
 }
 
 /// Result of numeric aggregation query for daily_global_stats.
+///
+/// # Example
+/// ```rust,ignore
+/// // AggregationResult is a struct that derives only Deserialize, so it cannot be directly constructed in a doc-test.
+/// // It represents the result of a numeric aggregation query for daily_global_stats.
+/// // For internal use in the aggregation process.
+/// ```
 #[derive(Deserialize)]
 pub struct AggregationResult {
     pub total_instances: i64,
@@ -45,6 +78,26 @@ pub struct AggregationResult {
 }
 
 /// Row from the `daily_global_stats` D1 table.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::DailyGlobalStats;
+/// use serde_json;
+///
+/// let stats = DailyGlobalStats {
+///     date: "2026-06-04".to_string(),
+///     total_instances: 10,
+///     total_requests: 100,
+///     total_unique_users: 5,
+///     models_used: "{}".to_string(),
+///     client_types: "{}".to_string(),
+///     avg_message_count: 5.0,
+///     tool_use_ratio: 0.5,
+///     versions: "{}".to_string(),
+/// };
+/// let json = serde_json::to_string(&stats).unwrap();
+/// assert!(json.contains("\"date\":\"2026-06-04\""));
+/// ```
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct DailyGlobalStats {
     pub date: String,
@@ -59,6 +112,16 @@ pub struct DailyGlobalStats {
 }
 
 /// Response for `GET /v1/stats`.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::StatsResponse;
+/// use serde_json;
+///
+/// let response = StatsResponse { stats: vec![] };
+/// let json = serde_json::to_string(&response).unwrap();
+/// assert!(json.contains("\"stats\":[]"));
+/// ```
 #[derive(Serialize, Debug, PartialEq)]
 pub struct StatsResponse {
     pub stats: Vec<DailyGlobalStats>,
@@ -72,13 +135,56 @@ pub struct SummaryResponse {
     pub days_active: i64,
 }
 
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::SummaryResponse;
+/// use serde_json;
+///
+/// let response = SummaryResponse {
+///     total_instances: 42,
+///     total_requests: 1000,
+///     total_unique_users: 20,
+///     days_active: 7,
+/// };
+/// let json = serde_json::to_string(&response).unwrap();
+/// let reparsed: SummaryResponse = serde_json::from_str(&json).unwrap();
+/// assert_eq!(reparsed.total_instances, 42);
+/// ```
+///
 /// Generic error response body.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::ErrorResponse;
+/// use serde_json;
+///
+/// let err = ErrorResponse { error: "test" };
+/// let json = serde_json::to_string(&err).unwrap();
+/// assert_eq!(json, r#"{"error":"test"}"#);
+/// ```
 #[derive(Serialize)]
 pub struct ErrorResponse {
     pub error: &'static str,
 }
 
 /// Response for `GET /v1/stats/shield` - Shields.io endpoint badge format.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::ShieldResponse;
+/// use serde_json;
+///
+/// let shield = ShieldResponse {
+///     schema_version: 1,
+///     label: "NEXUS",
+///     message: "10 active".to_string(),
+///     color: "blue",
+///     named_logo: "cloudflare",
+/// };
+/// let json = serde_json::to_string(&shield).unwrap();
+/// assert!(json.contains("\"schemaVersion\":1"));
+/// assert!(json.contains("\"namedLogo\":\"cloudflare\""));
+/// ```
 #[derive(Serialize)]
 pub struct ShieldResponse {
     #[serde(rename = "schemaVersion")]
@@ -91,6 +197,14 @@ pub struct ShieldResponse {
 }
 
 /// Result of processing a beacon request through the domain service.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::BeaconResult;
+///
+/// assert_eq!(BeaconResult::Success, BeaconResult::Success);
+/// assert_ne!(BeaconResult::Success, BeaconResult::RateLimited);
+/// ```
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 pub enum BeaconResult {
@@ -111,6 +225,14 @@ pub enum BeaconResult {
 }
 
 /// Errors that can occur during repository operations.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::RepositoryError;
+///
+/// let err = RepositoryError::DatabaseError("connection failed".to_string());
+/// assert_eq!(format!("{}", err), "database error: connection failed");
+/// ```
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum RepositoryError {
@@ -134,6 +256,14 @@ impl std::fmt::Display for RepositoryError {
 impl std::error::Error for RepositoryError {}
 
 /// Errors that can occur during authentication.
+///
+/// # Example
+/// ```
+/// use nexus_beacon_receiver::domain::types::AuthError;
+///
+/// let err = AuthError::InvalidCredentials;
+/// assert_eq!(format!("{}", err), "invalid credentials");
+/// ```
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum AuthError {

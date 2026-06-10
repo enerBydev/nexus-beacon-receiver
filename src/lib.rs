@@ -21,7 +21,7 @@
 
 mod adapters;
 mod config;
-mod domain;
+pub mod domain;
 mod infrastructure;
 
 use crate::adapters::d1_repository::D1Repository;

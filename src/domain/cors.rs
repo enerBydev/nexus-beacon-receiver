@@ -2,6 +2,20 @@
 
 /// Parse a comma-separated CORS origins string into a Vec of trimmed, non-empty origins.
 /// Pure function — no worker dependencies.
+///
+/// # Example
+///
+/// ```
+/// use nexus_beacon_receiver::domain::cors::parse_cors_origins;
+///
+/// let origins = "https://example.com, https://test.com";
+/// let result = parse_cors_origins(origins);
+/// assert_eq!(result, vec!["https://example.com".to_string(), "https://test.com".to_string()]);
+///
+/// let empty_origins = "";
+/// let result = parse_cors_origins(empty_origins);
+/// assert_eq!(result, Vec::<String>::new());
+/// ```
 pub fn parse_cors_origins(raw: &str) -> Vec<String> {
     raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
 }
