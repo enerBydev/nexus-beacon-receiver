@@ -1,0 +1,10 @@
+---
+source: src/domain/types.rs
+expression: response
+---
+{
+  "total_instances": 42,
+  "total_requests": 1000,
+  "total_unique_users": 20,
+  "days_active": 7
+}

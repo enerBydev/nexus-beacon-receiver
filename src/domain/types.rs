@@ -375,6 +375,87 @@ mod tests {
         let err = AuthError::InvalidCredentials;
         assert_eq!(format!("{}", err), "invalid credentials");
     }
+
+    #[test]
+    fn stats_response_snapshot() {
+        use insta;
+        let response = StatsResponse {
+            stats: vec![DailyGlobalStats {
+                date: "2026-06-08".to_string(),
+                total_instances: 5,
+                total_requests: 500,
+                total_unique_users: 3,
+                models_used: r#"{"claude-sonnet-4-6":3,"claude-opus-4-5":2}"#.to_string(),
+                client_types: r#"{"claude-code":4,"api":1}"#.to_string(),
+                avg_message_count: 4.0,
+                tool_use_ratio: 0.3,
+                versions: r#"{"0.19.0":3,"0.18.2":2}"#.to_string(),
+            }],
+        };
+        insta::assert_json_snapshot!(response);
+    }
+
+    #[test]
+    fn summary_response_snapshot() {
+        use insta;
+        let response = SummaryResponse {
+            total_instances: 42,
+            total_requests: 1000,
+            total_unique_users: 20,
+            days_active: 7,
+        };
+        insta::assert_json_snapshot!(response);
+    }
+
+    #[test]
+    fn shield_response_snapshot() {
+        use insta;
+        let response = ShieldResponse {
+            schema_version: 1,
+            label: "NEXUS",
+            message: "10 active".to_string(),
+            color: "blue",
+            named_logo: "cloudflare",
+        };
+        insta::assert_json_snapshot!(response);
+    }
+
+    #[test]
+    fn error_response_snapshot() {
+        use insta;
+        let err = ErrorResponse { error: "unauthorized" };
+        insta::assert_json_snapshot!(err);
+    }
+
+    #[test]
+    fn beacon_result_variants_snapshot() {
+        use insta;
+        let variants = format!(
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            BeaconResult::Success,
+            BeaconResult::RateLimited,
+            BeaconResult::Unauthorized,
+            BeaconResult::InvalidContentType,
+            BeaconResult::PayloadTooLarge,
+            BeaconResult::InvalidPayload,
+            BeaconResult::InternalError,
+        );
+        insta::assert_snapshot!(variants);
+    }
+
+    #[test]
+    fn repository_error_display_snapshot() {
+        use insta;
+        let err = RepositoryError::DatabaseError("connection failed".to_string());
+        insta::assert_snapshot!(format!("{}", err));
+    }
+
+    #[test]
+    fn auth_error_display_snapshot() {
+        use insta;
+        let err = AuthError::InvalidCredentials;
+        insta::assert_snapshot!(format!("{}", err));
+    }
 }
 
 #[cfg(test)]
